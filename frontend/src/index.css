@@ -1350,12 +1350,90 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .bottom-nav {
+  --bottom-nav-schedule-accent: 186 155 79;
+  --bottom-nav-schedule-light: 217 203 161;
   min-height: var(--bottom-nav-height);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .bottom-nav--enter {
   animation: bottom-nav-enter 260ms ease-out both;
+}
+
+.bottom-nav__schedule-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: rgb(var(--bottom-nav-schedule-light));
+  isolation: isolate;
+  transform: translateZ(0);
+  transition: transform 180ms ease-out;
+}
+
+.bottom-nav__schedule-icon::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -0.5rem;
+  border: 1px solid rgb(var(--bottom-nav-schedule-accent) / 0.62);
+  border-radius: 999px;
+  background: linear-gradient(
+    145deg,
+    rgb(var(--bottom-nav-schedule-accent) / 0.24),
+    rgb(var(--bottom-nav-schedule-accent) / 0.09)
+  );
+  box-shadow:
+    0 0 0.7rem rgb(var(--bottom-nav-schedule-accent) / 0.34),
+    inset 0 0 0.55rem rgb(var(--bottom-nav-schedule-light) / 0.12);
+  transition: background-color 180ms ease-out, box-shadow 180ms ease-out;
+}
+
+.bottom-nav__schedule-icon::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -0.78rem;
+  border: 1px solid rgb(var(--bottom-nav-schedule-light) / 0.48);
+  border-radius: 999px;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.bottom-nav__item--featured[aria-current='page'] .bottom-nav__schedule-icon {
+  color: #1E1A2E;
+}
+
+.bottom-nav__item--featured[aria-current='page'] .bottom-nav__schedule-icon::before {
+  border-color: rgb(var(--bottom-nav-schedule-light) / 0.92);
+  background: linear-gradient(
+    145deg,
+    rgb(var(--bottom-nav-schedule-light) / 0.98),
+    rgb(var(--bottom-nav-schedule-accent) / 0.94)
+  );
+  box-shadow:
+    0 0 0.85rem rgb(var(--bottom-nav-schedule-light) / 0.46),
+    inset 0 1px rgb(255 255 255 / 0.22);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .bottom-nav__item--featured:not([aria-current='page']) .bottom-nav__schedule-icon::after {
+    animation: bottom-nav-schedule-invite 1800ms ease-out 4400ms 2;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bottom-nav__item--featured:hover .bottom-nav__schedule-icon {
+    transform: translateY(-1px) scale(1.05);
+  }
+
+  .bottom-nav__item--featured:hover .bottom-nav__schedule-icon::before {
+    box-shadow:
+      0 0 1rem rgb(var(--bottom-nav-schedule-light) / 0.52),
+      inset 0 0 0.6rem rgb(var(--bottom-nav-schedule-light) / 0.18);
+  }
+}
+
+.bottom-nav__item--featured:active .bottom-nav__schedule-icon {
+  transform: scale(0.96);
 }
 
 .game-hub__currency {
@@ -1464,6 +1542,12 @@ h1, h2, h3, h4, h5, h6 {
 @keyframes bottom-nav-enter {
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
+}
+
+@keyframes bottom-nav-schedule-invite {
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  42% { opacity: 0.95; transform: scale(1.18); }
+  72% { opacity: 0.64; transform: scale(1.08); }
 }
 
 @keyframes game-hub-enter-left {
@@ -1878,6 +1962,7 @@ h1, h2, h3, h4, h5, h6 {
 
 @media (prefers-reduced-motion: reduce) {
   .bottom-nav--enter,
+  .bottom-nav__schedule-icon::after,
   .game-hub__currency,
   .game-hub__profile,
   .game-hub__portal::before,
@@ -1885,6 +1970,16 @@ h1, h2, h3, h4, h5, h6 {
   .game-hub__house-glow,
   .route-loading {
     animation: none;
+  }
+
+  .bottom-nav__schedule-icon,
+  .bottom-nav__schedule-icon::before {
+    transition: none;
+  }
+
+  .bottom-nav__item--featured:hover .bottom-nav__schedule-icon,
+  .bottom-nav__item--featured:active .bottom-nav__schedule-icon {
+    transform: none;
   }
 
   .game-hub__portal::before {
