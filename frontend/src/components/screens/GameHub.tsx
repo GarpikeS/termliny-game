@@ -31,11 +31,12 @@ export function GameHub() {
         className="scene-stage--bottom"
       >
         {/* Portal hotspots — positioned relative to image */}
-        {portals.map(portal => (
+        {portals.map((portal, index) => (
           <button
             type="button"
             key={portal.id}
-            className="absolute rounded-[50%] z-10"
+            className={`game-hub__portal game-hub__portal--${portal.id} absolute rounded-[50%] z-10`}
+            data-portal-sequence={index + 1}
             style={{
               left: `${portal.x}%`,
               top: `${portal.y}%`,

@@ -1366,6 +1366,81 @@ h1, h2, h3, h4, h5, h6 {
   animation: game-hub-enter-right 240ms ease-out both;
 }
 
+.game-hub__portal {
+  --game-hub-portal-glow: 217 203 161;
+  --game-hub-portal-delay: 600ms;
+  isolation: isolate;
+}
+
+.game-hub__portal::before,
+.game-hub__portal::after {
+  content: '';
+  position: absolute;
+  inset: -7%;
+  border: 1px solid rgb(var(--game-hub-portal-glow) / 0.72);
+  border-radius: inherit;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 28%,
+    rgb(var(--game-hub-portal-glow) / 0.1) 54%,
+    rgb(var(--game-hub-portal-glow) / 0.32) 76%,
+    transparent 100%
+  );
+  box-shadow:
+    0 0 0.45rem rgb(var(--game-hub-portal-glow) / 0.72),
+    0 0 1.4rem rgb(var(--game-hub-portal-glow) / 0.5),
+    inset 0 0 1.1rem rgb(var(--game-hub-portal-glow) / 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.96);
+}
+
+.game-hub__portal::after {
+  transition: opacity 180ms ease-out, transform 180ms ease-out;
+}
+
+.game-hub__portal--slavich {
+  --game-hub-portal-glow: 91 218 255;
+}
+
+.game-hub__portal--biryulki {
+  --game-hub-portal-glow: 196 137 255;
+  --game-hub-portal-delay: 1450ms;
+}
+
+.game-hub__portal--pestun {
+  --game-hub-portal-glow: 255 187 82;
+  --game-hub-portal-delay: 2300ms;
+}
+
+.game-hub__portal--horovod {
+  --game-hub-portal-glow: 91 255 157;
+  --game-hub-portal-delay: 3150ms;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .game-hub__portal::before {
+    animation: game-hub-portal-invite 1050ms cubic-bezier(0.22, 1, 0.36, 1) var(--game-hub-portal-delay) 1 both;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .game-hub__portal:hover::after {
+    opacity: 0.82;
+    transform: scale(1.06);
+  }
+}
+
+.game-hub__portal:focus-visible::after {
+  opacity: 0.9;
+  transform: scale(1.06);
+}
+
+.game-hub__portal:active::after {
+  opacity: 0.72;
+  transform: scale(0.98);
+}
+
 .game-hub__house {
   animation: game-hub-fade-in 320ms 420ms ease-out both;
 }
@@ -1399,6 +1474,13 @@ h1, h2, h3, h4, h5, h6 {
 @keyframes game-hub-enter-right {
   from { opacity: 0; transform: translateX(1.25rem); }
   to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes game-hub-portal-invite {
+  0%, 100% { opacity: 0; transform: scale(0.96); }
+  18% { opacity: 0.34; }
+  48% { opacity: 0.96; transform: scale(1.08); }
+  74% { opacity: 0.42; transform: scale(1.03); }
 }
 
 @keyframes game-hub-fade-in {
@@ -1798,10 +1880,26 @@ h1, h2, h3, h4, h5, h6 {
   .bottom-nav--enter,
   .game-hub__currency,
   .game-hub__profile,
+  .game-hub__portal::before,
   .game-hub__house,
   .game-hub__house-glow,
   .route-loading {
     animation: none;
+  }
+
+  .game-hub__portal::before {
+    opacity: 0.16;
+    transform: none;
+  }
+
+  .game-hub__portal::after {
+    transition: none;
+  }
+
+  .game-hub__portal:hover::after,
+  .game-hub__portal:focus-visible::after,
+  .game-hub__portal:active::after {
+    transform: none;
   }
 
   .pet-stage__motes {
