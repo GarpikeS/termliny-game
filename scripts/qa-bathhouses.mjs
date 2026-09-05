@@ -93,7 +93,8 @@ async function verify(browser, label, viewport, report) {
       contentType: 'application/json',
       body: 'null',
     }));
-    await page.goto(`${baseUrl}/bathhouses`, { waitUntil: 'networkidle' });
+    await page.goto(`${baseUrl}/bathhouses`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached', timeout: 15_000 });
     await page.evaluate(() => document.fonts.ready);
     assert.equal(await page.getByRole('heading', { level: 1, name: 'ТЕРМБУРГИ' }).count(), 1);
     assert.equal(await page.getByRole('heading', { level: 2, name: 'Москва' }).count(), 1);
