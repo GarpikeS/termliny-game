@@ -160,11 +160,31 @@ async function runInteractive(browser, report) {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height - 54);
     await page.mouse.down();
     await page.mouse.move(box.x + box.width * 0.03, box.y + box.height * 0.18, { steps: 5 });
-    const shotStartedAt = Date.now();
+    await page.evaluate(() => {
+      window.__qaBubbleFlight = { startedAt: null, finishedAt: null };
+      const observeFlight = () => {
+        const measurement = window.__qaBubbleFlight;
+        if (!measurement) return;
+        const flying = Boolean(document.querySelector('[data-flying-bubble]'));
+        if (flying && measurement.startedAt === null) {
+          measurement.startedAt = performance.now();
+        } else if (!flying && measurement.startedAt !== null && measurement.finishedAt === null) {
+          measurement.finishedAt = performance.now();
+          observer.disconnect();
+        }
+      };
+      const observer = new MutationObserver(observeFlight);
+      observer.observe(document.body, { childList: true, subtree: true });
+      observeFlight();
+    });
     await page.mouse.up();
     await page.waitForFunction(() => Number(document.querySelector('[data-bubbles-shots]')?.textContent) === 28);
     await waitForShotToLand(page);
-    const flightDuration = Date.now() - shotStartedAt;
+    await page.waitForFunction(() => window.__qaBubbleFlight?.finishedAt !== null);
+    const flightDuration = await page.evaluate(() => {
+      const measurement = window.__qaBubbleFlight;
+      return Math.round((measurement?.finishedAt ?? 0) - (measurement?.startedAt ?? 0));
+    });
     assert.ok(flightDuration < 1800, `бросок с рикошетом должен завершаться быстрее 1800 мс, получено ${flightDuration} мс`);
     assert.equal(await getShots(page), 28);
     const leftAttachedCount = await field.locator('.venik-bubble').count();
