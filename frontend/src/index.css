@@ -539,6 +539,17 @@ h1, h2, h3, h4, h5, h6 {
   background: #1E1A2E;
 }
 
+/* Mobile browser chrome must not resize an active game between swipes. */
+.app-shell--stable-game {
+  --app-viewport-height: 100vh;
+}
+
+@supports (height: 100svh) {
+  .app-shell--stable-game {
+    --app-viewport-height: 100svh;
+  }
+}
+
 /* Desktop preview frame. On phones the app becomes true fullscreen. */
 .phone-frame {
   width: 100%;

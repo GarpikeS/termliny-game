@@ -160,6 +160,7 @@ export function Game2048Screen() {
     const t = e.changedTouches[0];
     const dx = t.clientX - touchRef.current.x;
     const dy = t.clientY - touchRef.current.y;
+    touchRef.current = null;
     if (Math.abs(dx) < 30 && Math.abs(dy) < 30) return;
 
     let dir: Direction;
@@ -169,8 +170,11 @@ export function Game2048Screen() {
       dir = dy > 0 ? 'down' : 'up';
     }
     move(dir);
-    touchRef.current = null;
   }, [move]);
+
+  const handleTouchCancel = useCallback(() => {
+    touchRef.current = null;
+  }, []);
 
   const handleAbility = useCallback(() => {
     if (abilityUsed) return;
@@ -212,7 +216,7 @@ export function Game2048Screen() {
 
   return (
     <div
-      className="game-2048-screen immersive-background game-polished h-full min-h-0 flex flex-col bg-dark-surface"
+      className="game-2048-screen immersive-background game-polished h-full min-h-0 flex flex-col overscroll-none bg-dark-surface"
       style={{ '--game-background': 'url(/images/ui/game-2048-bg.webp)' } as CSSProperties}
     >
       {/* Header */}
@@ -300,9 +304,10 @@ export function Game2048Screen() {
       {/* Game board */}
       <div
         ref={boardAreaRef}
-        className="game-2048-screen__board-area min-h-0 flex-1 flex items-center justify-center px-4 py-2"
+        className="game-2048-screen__board-area min-h-0 flex-1 flex touch-none select-none items-center justify-center px-4 py-2"
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
       >
         <div
           className={`game-2048-board game-panel relative rounded-xl backdrop-blur-sm${coachStep ? ' game-tutorial-target' : ''}`}

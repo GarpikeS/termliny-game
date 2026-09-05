@@ -36,6 +36,7 @@ function AppLayout() {
   const viewport = useVisualViewportSize();
   const withBottomNav = !isBottomNavHidden(location.pathname);
   const standaloneSchedule = location.pathname === '/schedule' || location.pathname.startsWith('/schedule/');
+  const stableGameViewport = location.pathname === '/games' || location.pathname.startsWith('/games/');
 
   useEffect(() => {
     rememberEntrySource(location.search);
@@ -43,8 +44,8 @@ function AppLayout() {
 
   return (
     <div
-      className={`app-shell ${standaloneSchedule ? 'schedule-standalone-shell' : ''}`}
-      style={{ '--app-viewport-height': `${viewport.height}px` } as CSSProperties}
+      className={`app-shell ${stableGameViewport ? 'app-shell--stable-game' : ''} ${standaloneSchedule ? 'schedule-standalone-shell' : ''}`}
+      style={stableGameViewport ? undefined : { '--app-viewport-height': `${viewport.height}px` } as CSSProperties}
     >
       <div className={`phone-frame bg-dark-surface relative flex flex-col ${standaloneSchedule ? 'phone-frame--standalone' : ''}`}>
         <main

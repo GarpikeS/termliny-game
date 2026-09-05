@@ -14,7 +14,7 @@ const playwrightRoot = [
 ].find(candidate => candidate && existsSync(path.join(candidate, 'package.json')));
 if (!playwrightRoot) throw new Error('Playwright runtime was not found. Set CODEX_PLAYWRIGHT_PATH.');
 
-const { chromium } = require(playwrightRoot);
+const { chromium, webkit } = require(playwrightRoot);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = path.join(projectRoot, 'frontend');
 const outputRoot = path.join(projectRoot, 'artifacts', 'qa-game-shell-wallet');
@@ -159,7 +159,118 @@ async function assertNoHorizontalOverflow(page) {
   assert.equal(widths.document, widths.viewport, 'page must not overflow horizontally');
 }
 
-async function assertGameShell(page, route, viewport, surfaceSelector) {
+async function dispatchSyntheticTouchSwipe(page, dx, dy) {
+  await page.locator('.game-2048-board').evaluate((element, vector) => {
+    const rect = element.getBoundingClientRect();
+    const start = { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+    const finish = { clientX: start.clientX + vector.dx, clientY: start.clientY + vector.dy };
+    const dispatch = (type, touches, changedTouches) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperties(event, {
+        touches: { value: touches },
+        changedTouches: { value: changedTouches },
+      });
+      element.dispatchEvent(event);
+    };
+    dispatch('touchstart', [start], [start]);
+    dispatch('touchmove', [finish], [finish]);
+    dispatch('touchend', [], [finish]);
+  }, { dx, dy });
+}
+
+async function dispatchChromiumTouchSwipe(page, dx, dy) {
+  const box = await page.locator('.game-2048-board').boundingBox();
+  assert.ok(box, 'Славич: игровое поле должно принимать touch-события');
+  const start = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  const finish = { x: start.x + dx, y: start.y + dy };
+  const session = await page.context().newCDPSession(page);
+  try {
+    await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start] });
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [finish] });
+    await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } finally {
+    await session.detach();
+  }
+}
+
+async function assertStableSlavichLayout(page, engine = 'chromium') {
+  const initial = await page.evaluate(() => {
+    const shell = document.querySelector('.app-shell');
+    const frame = document.querySelector('.phone-frame');
+    const board = document.querySelector('.game-2048-board');
+    const interactionArea = document.querySelector('.game-2048-screen__board-area');
+    const shellRect = shell?.getBoundingClientRect();
+    const frameRect = frame?.getBoundingClientRect();
+    const boardRect = board?.getBoundingClientRect();
+    return {
+      hasStableClass: shell?.classList.contains('app-shell--stable-game') ?? false,
+      inlineViewportHeight: shell instanceof HTMLElement ? shell.style.getPropertyValue('--app-viewport-height') : '',
+      touchAction: interactionArea ? getComputedStyle(interactionArea).touchAction : '',
+      shell: shellRect && { top: shellRect.top, height: shellRect.height },
+      frame: frameRect && { top: frameRect.top, height: frameRect.height },
+      board: boardRect && { top: boardRect.top, width: boardRect.width, height: boardRect.height },
+    };
+  });
+
+  assert.equal(initial.hasStableClass, true, 'Славич: игровая оболочка должна использовать стабильную высоту');
+  assert.equal(initial.inlineViewportHeight, '', 'Славич: visualViewport не должен задавать игровую высоту inline');
+  assert.equal(initial.touchAction, 'none', 'Славич: свайп не должен передаваться браузерному скроллу');
+  assert.ok(initial.shell && initial.frame && initial.board, 'Славич: геометрия экрана должна быть доступна');
+
+  const afterViewportChromeEvent = await page.evaluate(async () => {
+    const viewport = window.visualViewport;
+    if (!viewport) return null;
+    Object.defineProperty(viewport, 'height', {
+      configurable: true,
+      value: Math.max(320, viewport.height - 96),
+    });
+    viewport.dispatchEvent(new Event('resize'));
+    viewport.dispatchEvent(new Event('scroll'));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const shellRect = document.querySelector('.app-shell')?.getBoundingClientRect();
+    const frameRect = document.querySelector('.phone-frame')?.getBoundingClientRect();
+    const boardRect = document.querySelector('.game-2048-board')?.getBoundingClientRect();
+    return {
+      shell: shellRect && { top: shellRect.top, height: shellRect.height },
+      frame: frameRect && { top: frameRect.top, height: frameRect.height },
+      board: boardRect && { top: boardRect.top, width: boardRect.width, height: boardRect.height },
+    };
+  });
+
+  if (afterViewportChromeEvent) {
+    for (const region of ['shell', 'frame', 'board']) {
+      const before = initial[region];
+      const after = afterViewportChromeEvent[region];
+      assert.ok(before && after, `Славич: область ${region} должна существовать`);
+      for (const dimension of Object.keys(before)) {
+        assert.ok(
+          Math.abs(before[dimension] - after[dimension]) <= 1,
+          `Славич: ${region}.${dimension} не должен прыгать при движении адресной панели`,
+        );
+      }
+    }
+  }
+
+  const vectors = [[-56, 0], [0, 56], [56, 0], [0, -56], [-56, 0], [0, 56]];
+  for (const [dx, dy] of vectors) {
+    if (engine === 'chromium') await dispatchChromiumTouchSwipe(page, dx, dy);
+    else await dispatchSyntheticTouchSwipe(page, dx, dy);
+    await page.waitForTimeout(60);
+    const afterMove = await page.locator('.game-2048-board').evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return { top: rect.top, width: rect.width, height: rect.height };
+    });
+    for (const dimension of ['top', 'width', 'height']) {
+      assert.ok(
+        Math.abs(initial.board[dimension] - afterMove[dimension]) <= 1,
+        `Славич: поле.${dimension} не должно прыгать между touch-ходами в ${engine}`,
+      );
+    }
+  }
+  assert.equal(await page.getByRole('button', { name: 'Отменить последний ход' }).isDisabled(), false, `Славич: touch-свайп должен работать в ${engine}`);
+}
+
+async function assertGameShell(page, route, viewport, surfaceSelector, engine = 'chromium') {
   await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded' });
   await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
   if (route.startsWith('/games/match3/play/')) {
@@ -220,6 +331,8 @@ async function assertGameShell(page, route, viewport, surfaceSelector) {
     }
   }
 
+  if (route === '/games/2048') await assertStableSlavichLayout(page, engine);
+
   const walletTarget = await page.locator('[data-game-wallet]').evaluate(element => {
     const rect = element.getBoundingClientRect();
     return { width: rect.width, height: rect.height };
@@ -251,6 +364,7 @@ const viewports = [
 ];
 
 let browser;
+let webkitBrowser;
 try {
   await fs.mkdir(outputRoot, { recursive: true });
   await waitForPreview();
@@ -429,8 +543,18 @@ try {
     assert.deepEqual(runtimeErrors, [], 'delayed account hydration errors');
     await context.close();
   }
+
+  {
+    webkitBrowser = await webkit.launch({ headless: true });
+    const viewport = { width: 390, height: 844 };
+    const { context, page, runtimeErrors } = await newPage(webkitBrowser, viewport);
+    await assertGameShell(page, '/games/2048', viewport, '.game-2048-board', 'webkit');
+    assert.deepEqual(runtimeErrors, [], 'Славич: WebKit mobile layout errors');
+    await context.close();
+  }
   console.log('game shell and wallet browser QA passed');
 } finally {
+  if (webkitBrowser) await webkitBrowser.close();
   if (browser) await browser.close();
   await closePreview();
 }
