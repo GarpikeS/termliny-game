@@ -496,6 +496,7 @@ export function GameScreen() {
         levelName={config.name}
         score={state.score}
         movesLeft={state.movesLeft}
+        currency={progress.currency}
         objectives={state.objectives}
         onPause={() => setShowPause(true)}
         character={character}

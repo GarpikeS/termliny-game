@@ -7,12 +7,14 @@ import { ELEMENT_COLORS } from '@/data/termliny';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import { Match3Coach } from './Match3Coach';
 import type { Match3TutorialStep } from './Match3Coach';
+import { GameStatusBar } from './GameStatusBar';
 import type { CSSProperties } from 'react';
 
 interface GameHUDProps {
   levelName: string;
   score: number;
   movesLeft: number;
+  currency: number;
   objectives: Objective[];
   onPause: () => void;
   character?: Termlin;
@@ -22,7 +24,7 @@ interface GameHUDProps {
   abilityTutorial?: Extract<Match3TutorialStep, { kind: 'ability' }> | null;
 }
 
-export function GameHUD({ levelName, score, movesLeft, objectives, onPause, character, abilityReady, onAbility, highlightAbility, abilityTutorial }: GameHUDProps) {
+export function GameHUD({ levelName, score, movesLeft, currency, objectives, onPause, character, abilityReady, onAbility, highlightAbility, abilityTutorial }: GameHUDProps) {
   return (
     <div className="game-hud game-hud--match3 text-white px-4 pb-3">
       {/* Top row */}
@@ -70,17 +72,14 @@ export function GameHUD({ levelName, score, movesLeft, objectives, onPause, char
         </div>
       )}
 
-      {/* Stats bar */}
-      <div className="game-hud__stats bg-white/5 border border-white/10 rounded-xl p-3 flex items-center justify-between">
-        <div className="text-center">
-          <p className="text-white/70 text-xs font-bold uppercase">Ходы</p>
-          <p data-game-moves className="text-2xl font-bold tabular-nums text-white">{movesLeft}</p>
-        </div>
-        <div className="text-center">
-          <p className="text-white/70 text-xs font-bold uppercase">Очки</p>
-          <p className="text-2xl font-bold tabular-nums text-primary">{score.toLocaleString()}</p>
-        </div>
-      </div>
+      <GameStatusBar
+        metricLabel="Счёт игры"
+        metricValue={score}
+        secondaryLabel="Ходы"
+        secondaryValue={movesLeft}
+        secondaryValueDataAttribute="data-game-moves"
+        currency={currency}
+      />
 
       {/* Goals */}
       <div className="game-hud__goals mt-3 space-y-2">

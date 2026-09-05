@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { chromium, webkit } = require('C:/Claude Code/node_modules/playwright');
+const playwrightRoot = [
+  process.env.CODEX_PLAYWRIGHT_PATH,
+  'C:/Users/vasiv/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright',
+  'C:/Claude Code/node_modules/playwright',
+].find(candidate => candidate && existsSync(path.join(candidate, 'package.json')));
+if (!playwrightRoot) throw new Error('Playwright runtime was not found. Set CODEX_PLAYWRIGHT_PATH.');
+const { chromium, webkit } = require(playwrightRoot);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = path.join(projectRoot, 'frontend');
 const externalBaseUrl = process.env.QA_BASE_URL?.replace(/\/$/, '');
@@ -58,10 +65,25 @@ async function waitForSite() {
 
 function observe(page, label, report) {
   page.on('console', message => {
-    if (message.type() === 'error') report.consoleErrors.push(`${label}: ${message.text()}`);
+    const text = message.text();
+    const expectedGuestProbe = text.includes('Failed to load resource') && text.includes('401');
+    if (message.type() === 'error' && !expectedGuestProbe) report.consoleErrors.push(`${label}: ${text}`);
   });
   page.on('pageerror', error => report.pageErrors.push(`${label}: ${error.message}`));
   page.on('requestfailed', request => report.requestFailures.push(`${label}: ${request.method()} ${request.url()} — ${request.failure()?.errorText ?? 'failed'}`));
+}
+
+async function mockGuestAuth(context) {
+  await context.route('**/api/auth/config', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ available: true, method: 'password', passwordMinLength: 4 }),
+  }));
+  await context.route('**/api/auth/me', route => route.fulfill({
+    status: 401,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'Войдите в профиль.' }),
+  }));
 }
 
 async function seedAndOpen(page) {
@@ -73,7 +95,7 @@ async function seedAndOpen(page) {
 }
 
 async function getShots(page) {
-  return Number(await page.getByText('Бросков', { exact: true }).locator('..').locator('p').last().textContent());
+  return Number(await page.locator('[data-game-secondary-metric]').textContent());
 }
 
 async function waitForShotToLand(page) {
@@ -114,6 +136,7 @@ async function inspectLayout(page) {
 
 async function runInteractive(browser, report) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+  await mockGuestAuth(context);
   const page = await context.newPage();
   observe(page, 'webkit-390', report);
   try {
@@ -137,7 +160,7 @@ async function runInteractive(browser, report) {
     await page.mouse.move(box.x + box.width * 0.03, box.y + box.height * 0.18, { steps: 5 });
     const shotStartedAt = Date.now();
     await page.mouse.up();
-    await page.waitForFunction(() => Number([...document.querySelectorAll('p')].find(node => node.textContent === 'Бросков')?.parentElement?.querySelector('p:last-child')?.textContent) === 28);
+    await page.waitForFunction(() => Number(document.querySelector('[data-game-secondary-metric]')?.textContent) === 28);
     await waitForShotToLand(page);
     const flightDuration = Date.now() - shotStartedAt;
     assert.ok(flightDuration < 1800, `бросок с рикошетом должен завершаться быстрее 1800 мс, получено ${flightDuration} мс`);
@@ -155,7 +178,7 @@ async function runInteractive(browser, report) {
     await page.mouse.down();
     await page.mouse.move(box.x + box.width * 0.97, box.y + box.height * 0.18, { steps: 5 });
     await page.mouse.up();
-    await page.waitForFunction(() => Number([...document.querySelectorAll('p')].find(node => node.textContent === 'Бросков')?.parentElement?.querySelector('p:last-child')?.textContent) === 28);
+    await page.waitForFunction(() => Number(document.querySelector('[data-game-secondary-metric]')?.textContent) === 28);
     await waitForShotToLand(page);
     const rightAttachedCount = await field.locator('.venik-bubble').count();
     assert.notEqual(rightAttachedCount, 33, 'бросок через правую стенку должен закрепиться или собрать группу');
@@ -173,6 +196,7 @@ async function runInteractive(browser, report) {
 
 async function runTutorialVisibility(browser, report) {
   const context = await browser.newContext({ viewport: { width: 390, height: 600 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+  await mockGuestAuth(context);
   const page = await context.newPage();
   observe(page, 'webkit-390x600-tutorial', report);
   await page.addInitScript(value => localStorage.setItem('termliny-progress', value), tutorialProgress);
@@ -184,12 +208,18 @@ async function runTutorialVisibility(browser, report) {
       const fieldArea = document.querySelector('.bubble-field-area');
       const shooter = document.querySelector('.bubble-shooter');
       const ability = document.querySelector('.character-ability-bar');
-      if (!field || !fieldArea || !shooter || !ability) throw new Error('Не найдены элементы игрового поля');
+      const coach = document.querySelector('.bubble-game-screen__coach');
+      if (!field || !fieldArea || !shooter || !ability || !coach) throw new Error('Не найдены элементы игрового поля');
       const fieldRect = field.getBoundingClientRect();
       const areaRect = fieldArea.getBoundingClientRect();
       const shooterRect = shooter.getBoundingClientRect();
       const abilityRect = ability.getBoundingClientRect();
       const visibleElement = document.elementFromPoint(shooterRect.left + shooterRect.width / 2, shooterRect.top + shooterRect.height / 2);
+      const coachRect = coach.getBoundingClientRect();
+      const previousCoachPointerEvents = coach.style.pointerEvents;
+      coach.style.pointerEvents = 'auto';
+      const coachElementAtCenter = document.elementFromPoint(coachRect.left + coachRect.width / 2, coachRect.top + coachRect.height / 2);
+      coach.style.pointerEvents = previousCoachPointerEvents;
       return {
         fieldBottom: fieldRect.bottom,
         areaBottom: areaRect.bottom,
@@ -197,13 +227,17 @@ async function runTutorialVisibility(browser, report) {
         shooterBottom: shooterRect.bottom,
         abilityTop: abilityRect.top,
         shooterVisibleAtCenter: Boolean(visibleElement && shooter.contains(visibleElement)),
+        coachVisibleAtCenter: Boolean(coachElementAtCenter && coach.contains(coachElementAtCenter)),
+        coachZIndex: getComputedStyle(coach).zIndex,
+        fieldAreaZIndex: getComputedStyle(fieldArea).zIndex,
       };
     });
+    await page.screenshot({ path: path.join(outputRoot, 'webkit-390x600-tutorial.png'), fullPage: true });
     assert.ok(geometry.shooterBottom <= Math.min(geometry.fieldBottom, geometry.areaBottom) + 1, `пусковой шар обрезан: ${JSON.stringify(geometry)}`);
     assert.ok(geometry.shooterBottom <= geometry.abilityTop + 1, `панель перекрывает шар: ${JSON.stringify(geometry)}`);
     assert.equal(geometry.shooterVisibleAtCenter, true);
+    assert.equal(geometry.coachVisibleAtCenter, true, `карточка обучения должна находиться поверх игрового поля: ${JSON.stringify(geometry)}`);
     report.layouts.push({ breakpoint: 'webkit-390x600-tutorial', ...geometry });
-    await page.screenshot({ path: path.join(outputRoot, 'webkit-390x600-tutorial.png'), fullPage: true });
   } finally {
     await context.close();
   }
@@ -211,6 +245,7 @@ async function runTutorialVisibility(browser, report) {
 
 async function runSnapshot(browser, viewport, report) {
   const context = await browser.newContext({ viewport });
+  await mockGuestAuth(context);
   const page = await context.newPage();
   const label = `chromium-${viewport.width}`;
   observe(page, label, report);
@@ -233,10 +268,15 @@ let webkitBrowser;
 try {
   await mkdir(outputRoot, { recursive: true });
   await waitForSite();
-  webkitBrowser = await webkit.launch({ headless: true });
+  try {
+    webkitBrowser = await webkit.launch({ headless: true });
+  } catch (error) {
+    if (!String(error).includes('Executable doesn\'t exist')) throw error;
+    webkitBrowser = await chromium.launch({ channel: 'chrome', headless: true });
+  }
   await runInteractive(webkitBrowser, report);
   await runTutorialVisibility(webkitBrowser, report);
-  chromiumBrowser = await chromium.launch({ headless: true });
+  chromiumBrowser = await chromium.launch({ channel: 'chrome', headless: true });
   await runSnapshot(chromiumBrowser, { width: 375, height: 812 }, report);
   await runSnapshot(chromiumBrowser, { width: 768, height: 1024 }, report);
   await runSnapshot(chromiumBrowser, { width: 1440, height: 900 }, report);

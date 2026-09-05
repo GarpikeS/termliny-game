@@ -23,9 +23,9 @@ import {
   Utensils,
   X,
 } from 'lucide-react';
-import { CurrencyDisplay } from '@/components/ui/CurrencyDisplay';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import { GameCoach, type GameCoachStep } from '@/components/game/GameCoach';
+import { GameStatusBar } from '@/components/game/GameStatusBar';
 import { usePet } from '@/hooks/usePet';
 import { useGameContext } from '@/store/GameContext';
 import { termliny, ELEMENT_COLORS, getTermlinById } from '@/data/termliny';
@@ -265,6 +265,14 @@ export function TamagotchiScreen() {
             </button>
           </div>
         </div>
+        <GameStatusBar
+          metricLabel="Опыт"
+          metricValue={0}
+          secondaryLabel="Уровень"
+          secondaryValue="—"
+          currency={progress.currency}
+          className="bg-black/50 px-5 pb-2"
+        />
         <div className="gold-separator" />
         <div className="flex-1 overflow-y-auto phone-scroll px-5 py-4 bg-black/30">
           {progress.petDeparture && (
@@ -342,9 +350,25 @@ export function TamagotchiScreen() {
             <p className="font-heading text-sm font-bold text-primary tracking-wide truncate">{pet.name}</p>
             <p className="text-white/45 text-[10px]">Ур. {level} · {STAGE_LABELS[pet.stage]}</p>
           </div>
-          <CurrencyDisplay amount={progress.currency} />
+          <button
+            type="button"
+            onClick={() => setCoachStep('care')}
+            aria-label="Показать обучение"
+            aria-pressed={coachStep !== null}
+            className="game-icon-button min-h-11 min-w-11"
+          >
+            <BookOpenText size={17} className="text-primary" />
+          </button>
         </div>
       </header>
+      <GameStatusBar
+        metricLabel="Опыт"
+        metricValue={`${levelProgress.current}/${levelProgress.max}`}
+        secondaryLabel="Уровень"
+        secondaryValue={level}
+        currency={progress.currency}
+        className="bg-black/55 px-4 pb-2"
+      />
       <div className="gold-separator" />
 
       <div className="bg-black/45 px-4 py-2" data-pet-daily-coins>

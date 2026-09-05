@@ -12,6 +12,7 @@ import { getTotalLevels } from '@/engine/engine-bubbles/bubbleLevels';
 import { Button } from '@/components/ui/Button';
 import { CharacterAbilityBar } from '@/components/game/CharacterAbilityBar';
 import { CoachGesture, GameCoach, type GameCoachStep } from '@/components/game/GameCoach';
+import { GameStatusBar } from '@/components/game/GameStatusBar';
 import { triggerHaptic } from '@/utils/haptics';
 import { LivesDisplay } from '@/components/ui/LivesDisplay';
 import { DAILY_GAME_REWARD_LIMIT, STANDARD_WIN_REWARD, normalizeDailyGameRewards } from '@/data/economy';
@@ -116,8 +117,11 @@ export function BubbleShooterScreen() {
   const { progress, markTutorialSeen } = useGameContext();
   const [fieldWidth, setFieldWidth] = useState(getResponsiveFieldWidth);
   const fieldWidthRef = useRef(fieldWidth);
+  const fieldHeight = fieldWidth * 1.4;
   const { state, earnedReward, aimAngle, setAimAngle, shoot, flying, flightTrail, bursts, nextLevel, restart, resizeField } = useBubbles(fieldWidth);
+  const fieldAreaRef = useRef<HTMLDivElement>(null);
   const fieldRef = useRef<HTMLDivElement>(null);
+  const [fieldScale, setFieldScale] = useState(1);
   const dragging = useRef(false);
   const [isAiming, setIsAiming] = useState(false);
   const previousScore = useRef(state.score);
@@ -141,6 +145,31 @@ export function BubbleShooterScreen() {
     return () => window.removeEventListener('resize', updateFieldWidth);
   }, [resizeField]);
 
+  useEffect(() => {
+    const area = fieldAreaRef.current;
+    if (!area) return;
+
+    let frame = 0;
+    const fitField = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const rect = area.getBoundingClientRect();
+        const availableHeight = Math.max(1, rect.height - 4);
+        const nextScale = Math.min(1, rect.width / fieldWidth, availableHeight / fieldHeight);
+        setFieldScale(current => Math.abs(current - nextScale) < 0.002 ? current : nextScale);
+      });
+    };
+
+    const observer = new ResizeObserver(fitField);
+    observer.observe(area);
+    fitField();
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [fieldHeight, fieldWidth]);
+
   const character = getTermlinById(progress.selectedCharacter);
   const charColor = character ? (ELEMENT_COLORS[character.element] ?? '#BA9B4F') : '#BA9B4F';
   const bubblesCoinsToday = normalizeDailyGameRewards(progress.dailyGameRewards).earned.bubbles;
@@ -148,7 +177,6 @@ export function BubbleShooterScreen() {
   const scoreMult = progress.selectedCharacter === 'pereslav' ? 1.20 : 1.0;
 
   const shooterX = fieldWidth / 2;
-  const fieldHeight = fieldWidth * 1.4;
   const shooterY = fieldHeight - getShooterBottomGutter(window.innerHeight);
 
   const totalLevels = getTotalLevels();
@@ -187,12 +215,20 @@ export function BubbleShooterScreen() {
     else if (state.isLost) triggerHaptic('warning');
   }, [state.isLost, state.isWon]);
 
+  const getLogicalPointer = useCallback((clientX: number, clientY: number) => {
+    const rect = fieldRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: ((clientX - rect.left) / rect.width) * fieldWidth,
+      y: ((clientY - rect.top) / rect.height) * fieldHeight,
+    };
+  }, [fieldHeight, fieldWidth]);
+
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
-    const rect = fieldRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const point = getLogicalPointer(e.clientX, e.clientY);
+    if (!point) return;
+    const { x, y } = point;
     const shooterHitRadius = 34;
     if (Math.hypot(x - shooterX, y - shooterY) > shooterHitRadius || flying || state.isWon || state.isLost) return;
 
@@ -201,17 +237,16 @@ export function BubbleShooterScreen() {
     setIsAiming(true);
     const angle = Math.atan2(x - shooterX, shooterY - y);
     setAimAngle(Math.max(-1.2, Math.min(1.2, angle)));
-  }, [flying, shooterX, shooterY, setAimAngle, state.isLost, state.isWon]);
+  }, [flying, getLogicalPointer, shooterX, shooterY, setAimAngle, state.isLost, state.isWon]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!dragging.current) return;
-    const rect = fieldRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const point = getLogicalPointer(e.clientX, e.clientY);
+    if (!point) return;
+    const { x, y } = point;
     const angle = Math.atan2(x - shooterX, shooterY - y);
     setAimAngle(Math.max(-1.2, Math.min(1.2, angle)));
-  }, [shooterX, shooterY, setAimAngle]);
+  }, [getLogicalPointer, shooterX, shooterY, setAimAngle]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     if (dragging.current) {
@@ -270,12 +305,12 @@ export function BubbleShooterScreen() {
 
   return (
     <div
-      className="immersive-background game-polished h-full min-h-0 overflow-hidden flex flex-col bg-dark-surface"
+      className="bubble-game-screen immersive-background game-polished h-full min-h-0 overflow-hidden flex flex-col bg-dark-surface"
       style={{ '--game-background': 'url(/images/ui/game-bubbles-bg.webp)' } as CSSProperties}
     >
       {/* Header */}
-      <div className="screen-safe-header pb-2 px-4 bg-black/50 backdrop-blur-sm">
-        <div className="flex items-center justify-between">
+      <div className="bubble-game-screen__header screen-safe-header pb-2 px-4 bg-black/50 backdrop-blur-sm">
+        <div className="grid grid-cols-[44px_1fr_auto] items-center">
           <button type="button" aria-label="Назад к играм" onClick={() => navigate('/games')} className="min-w-11 min-h-11 flex items-center justify-center text-white/80 hover:text-primary transition-colors">
             <ArrowLeft size={20} />
           </button>
@@ -285,47 +320,46 @@ export function BubbleShooterScreen() {
             </h2>
             <p className="text-white/40 text-[10px]">{state.levelName}</p>
           </div>
-          <button type="button" aria-label="Начать заново" onClick={handleRestart} className="min-w-11 min-h-11 flex items-center justify-center text-white/80 hover:text-primary transition-colors">
-            <RotateCcw size={18} />
-          </button>
+          <div className="flex items-center justify-end">
+            {hasActiveAbility && (
+              <button
+                type="button"
+                onClick={handleAbility}
+                aria-label="Показать траекторию"
+                className="min-h-11 min-w-11 rounded-xl border bg-white/5 flex items-center justify-center animate-pulse"
+                style={{ borderColor: `${charColor}40` }}
+              >
+                <Sparkles size={16} style={{ color: charColor }} />
+              </button>
+            )}
+            <button type="button" aria-label="Начать заново" onClick={handleRestart} className="min-w-11 min-h-11 flex items-center justify-center text-white/80 hover:text-primary transition-colors">
+              <RotateCcw size={18} />
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="px-4 pb-1 bg-black/40">
-        <div className="flex gap-2">
-          <div className="flex-1 bg-black/40 border border-white/15 rounded-xl p-2 text-center backdrop-blur-sm">
-            <p className="text-white/50 text-[9px]">Очки</p>
-            <p className="text-primary font-bold text-base">{displayScore}</p>
-          </div>
+      <GameStatusBar
+        metricLabel="Счёт игры"
+        metricValue={displayScore}
+        secondaryLabel="Бросков"
+        secondaryValue={state.shotsLeft}
+        currency={progress.currency}
+        className="bubble-game-screen__status bg-black/40 px-4 pb-1"
+        action={(
           <button
             type="button"
             onClick={() => setCoachStep('aim')}
             aria-label="Показать обучение"
             aria-pressed={coachStep !== null}
-            className="game-icon-button rounded-xl"
+            className="game-icon-button min-h-11 min-w-11 rounded-xl"
           >
             <BookOpenText size={17} className="text-primary" />
           </button>
-          <div className="flex-1 bg-black/40 border border-white/15 rounded-xl p-2 text-center backdrop-blur-sm">
-            <p className="text-white/50 text-[9px]">Бросков</p>
-            <p className="text-primary font-bold text-base">{state.shotsLeft}</p>
-          </div>
-          {hasActiveAbility && (
-            <button
-              type="button"
-              onClick={handleAbility}
-              aria-label="Показать траекторию"
-              className="min-w-11 min-h-11 bg-white/5 border rounded-xl flex items-center justify-center animate-pulse"
-              style={{ borderColor: `${charColor}40` }}
-            >
-              <Sparkles size={16} style={{ color: charColor }} />
-            </button>
-          )}
-        </div>
-      </div>
+        )}
+      />
 
-      <div className="bg-black/40 px-4 pb-1 flex items-center justify-between gap-2">
+      <div className="bubble-game-screen__rewards bg-black/40 px-4 pb-1 flex items-center justify-between gap-2">
         <LivesDisplay lives={progress.lives} nextLifeAt={progress.nextLifeAt} className="min-h-9 px-2.5" />
         <div
           className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-white/10 bg-black/45 px-2.5"
@@ -343,21 +377,31 @@ export function BubbleShooterScreen() {
         </div>
       </div>
 
-      <GameCoach step={coachContent} className="game-coach--screen game-coach--bubbles" />
+      <GameCoach step={coachContent} className="bubble-game-screen__coach game-coach--screen game-coach--bubbles" />
 
       {/* Game field */}
-      <div className="bubble-field-area flex-1 min-h-0 flex items-start justify-center pt-1 overflow-hidden">
+      <div ref={fieldAreaRef} className="bubble-field-area flex-1 min-h-0 flex items-start justify-center pt-1 overflow-hidden">
         <div
-          ref={fieldRef}
-          className="bubble-field-surface game-panel relative backdrop-blur-sm rounded-xl overflow-hidden touch-none"
-          style={{ width: fieldWidth, height: fieldHeight }}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerCancel}
-          onContextMenu={suppressNativeFieldInteraction}
-          onDragStart={suppressNativeFieldInteraction}
+          className="relative shrink-0"
+          style={{ width: fieldWidth * fieldScale, height: fieldHeight * fieldScale }}
+          data-bubble-field-scale={fieldScale.toFixed(3)}
         >
+          <div
+            ref={fieldRef}
+            className="bubble-field-surface game-panel relative backdrop-blur-sm rounded-xl overflow-hidden touch-none"
+            style={{
+              width: fieldWidth,
+              height: fieldHeight,
+              transform: `scale(${fieldScale})`,
+              transformOrigin: 'top left',
+            }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerCancel}
+            onContextMenu={suppressNativeFieldInteraction}
+            onDragStart={suppressNativeFieldInteraction}
+          >
           {isAiming && aimLine.length > 1 && (
             <svg className="bubble-aim-line absolute inset-0 pointer-events-none" style={{ width: fieldWidth, height: fieldHeight }} aria-hidden="true">
               <polyline
@@ -500,6 +544,7 @@ export function BubbleShooterScreen() {
               </motion.div>
             )}
           </AnimatePresence>
+          </div>
         </div>
       </div>
 

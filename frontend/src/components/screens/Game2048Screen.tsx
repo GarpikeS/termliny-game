@@ -9,6 +9,7 @@ import { Tile2048 } from '@/components/game/Tile2048';
 import { Win2048Popup } from '@/popups/Win2048Popup';
 import { CharacterAbilityBar } from '@/components/game/CharacterAbilityBar';
 import { CoachGesture, GameCoach, type GameCoachStep } from '@/components/game/GameCoach';
+import { GameStatusBar } from '@/components/game/GameStatusBar';
 import type { Direction } from '@/engine/engine-2048/moves2048';
 import { triggerHaptic } from '@/utils/haptics';
 import { Modal } from '@/components/ui/Modal';
@@ -28,10 +29,12 @@ export function Game2048Screen() {
   const { progress, markTutorialSeen, spendLife } = useGameContext();
   const { state, earnedReward, move, continueGame, undo, restart } = useGame2048();
   const touchRef = useRef<{ x: number; y: number } | null>(null);
+  const boardAreaRef = useRef<HTMLDivElement>(null);
   const previousMoveCount = useRef(state.moveCount);
   const lifeSpentForLoss = useRef(false);
   const [abilityUsed, setAbilityUsed] = useState(false);
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+  const [boardAreaSize, setBoardAreaSize] = useState({ width: 0, height: 0 });
   const viewport = useVisualViewportSize();
   const [coachStep, setCoachStep] = useState<Game2048CoachStep>(() => {
     if (!progress.tutorialFlags.includes(MOVE_TUTORIAL_ID)) return 'move';
@@ -43,10 +46,39 @@ export function Game2048Screen() {
   const charColor = character ? (ELEMENT_COLORS[character.element] ?? '#BA9B4F') : '#BA9B4F';
   const slavichCoinsToday = normalizeDailyGameRewards(progress.dailyGameRewards).earned.game2048;
 
-  // Keep the ability bar above mobile browser chrome. The board grows back after onboarding.
+  useEffect(() => {
+    const area = boardAreaRef.current;
+    if (!area) return;
+
+    let frame = 0;
+    const measureArea = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const rect = area.getBoundingClientRect();
+        const next = { width: Math.round(rect.width), height: Math.round(rect.height) };
+        setBoardAreaSize(current => (
+          current.width === next.width && current.height === next.height ? current : next
+        ));
+      });
+    };
+
+    const observer = new ResizeObserver(measureArea);
+    observer.observe(area);
+    measureArea();
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, []);
+
+  // Use the real flex area once it is measured so the persistent navigation
+  // can never cover the board on short screens.
   const verticalUiSpace = coachStep ? 405 : 330;
-  const heightLimit = Math.max(196, viewport.height - verticalUiSpace);
-  const containerSize = Math.min(300, viewport.width - 40, heightLimit);
+  const fallbackHeightLimit = Math.max(144, viewport.height - verticalUiSpace);
+  const widthLimit = boardAreaSize.width > 0 ? boardAreaSize.width - 32 : viewport.width - 40;
+  const heightLimit = boardAreaSize.height > 0 ? boardAreaSize.height - 16 : fallbackHeightLimit;
+  const containerSize = Math.max(128, Math.min(300, widthLimit, heightLimit));
   const cellSize = (containerSize - GAP * (GRID_SIZE + 1)) / GRID_SIZE;
 
   // Score multiplier
@@ -175,12 +207,12 @@ export function Game2048Screen() {
 
   return (
     <div
-      className="immersive-background game-polished h-full min-h-0 flex flex-col bg-dark-surface"
+      className="game-2048-screen immersive-background game-polished h-full min-h-0 flex flex-col bg-dark-surface"
       style={{ '--game-background': 'url(/images/ui/game-2048-bg.webp)' } as CSSProperties}
     >
       {/* Header */}
-      <div className="screen-safe-header pb-2 px-4 bg-black/50 backdrop-blur-sm">
-        <div className="grid grid-cols-[88px_1fr_88px] items-center">
+      <div className="game-2048-screen__header screen-safe-header pb-2 px-4 bg-black/50 backdrop-blur-sm">
+        <div className="grid grid-cols-[44px_1fr_auto] items-center">
           <button type="button" aria-label="Назад к играм" onClick={() => navigate('/games')} className="min-w-11 min-h-11 flex items-center justify-center text-white/80 hover:text-primary transition-colors">
             <ArrowLeft size={20} />
           </button>
@@ -203,11 +235,22 @@ export function Game2048Screen() {
             >
               <RotateCcw size={18} />
             </button>
+            {hasActiveAbility && (
+              <button
+                type="button"
+                onClick={handleAbility}
+                aria-label="Использовать способность персонажа"
+                className="min-h-11 min-w-11 rounded-xl border bg-white/5 flex items-center justify-center animate-pulse"
+                style={{ borderColor: `${charColor}40` }}
+              >
+                <Sparkles size={18} style={{ color: charColor }} />
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      <div className="px-4 py-1 bg-black/40 flex items-center justify-between gap-2">
+      <div className="game-2048-screen__rewards px-4 py-1 bg-black/40 flex items-center justify-between gap-2">
         <LivesDisplay lives={progress.lives} nextLifeAt={progress.nextLifeAt} className="min-h-9 px-2.5" />
         <span
           className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-white/10 bg-black/45 px-2.5 text-white/60"
@@ -226,47 +269,34 @@ export function Game2048Screen() {
         </span>
       </div>
 
-      {/* Scores */}
-      <div className="px-4 pb-2 bg-black/40">
-        <div className="flex gap-2">
-          <div className="flex-1 bg-black/40 border border-white/15 rounded-xl p-2.5 text-center backdrop-blur-sm">
-            <p className="text-white/50 text-[10px] uppercase">Очки</p>
-            <p className="text-primary font-bold text-lg">{displayScore}</p>
-          </div>
+      <GameStatusBar
+        metricLabel="Счёт игры"
+        metricValue={displayScore}
+        secondaryLabel="Рекорд"
+        secondaryValue={state.bestScore}
+        currency={progress.currency}
+        className="game-2048-screen__status bg-black/40 px-4 pb-2"
+        action={(
           <button
             type="button"
             onClick={() => setCoachStep('move')}
             aria-label="Показать обучение"
             aria-pressed={coachStep !== null}
-            className="game-icon-button min-w-12 rounded-xl"
+            className="game-icon-button min-h-11 min-w-11 rounded-xl"
           >
             <BookOpenText size={18} className="text-primary" />
           </button>
-          <div className="flex-1 bg-black/40 border border-white/15 rounded-xl p-2.5 text-center backdrop-blur-sm">
-            <p className="text-white/50 text-[10px] uppercase">Рекорд</p>
-            <p className="text-primary font-bold text-lg">{state.bestScore}</p>
-          </div>
-          {hasActiveAbility && (
-            <button
-              type="button"
-              onClick={handleAbility}
-              aria-label="Использовать способность персонажа"
-              className="min-w-12 min-h-11 bg-white/5 border rounded-xl flex items-center justify-center animate-pulse"
-              style={{ borderColor: `${charColor}40` }}
-            >
-              <Sparkles size={18} style={{ color: charColor }} />
-            </button>
-          )}
-        </div>
-      </div>
+        )}
+      />
 
-      <div className="gold-separator" />
+      <div className="game-2048-screen__separator gold-separator" />
 
-      <GameCoach step={coachContent} className="game-coach--screen" />
+      <GameCoach step={coachContent} className="game-2048-screen__coach game-coach--screen" />
 
       {/* Game board */}
       <div
-        className="min-h-0 flex-1 flex items-center justify-center px-4 py-2"
+        ref={boardAreaRef}
+        className="game-2048-screen__board-area min-h-0 flex-1 flex items-center justify-center px-4 py-2"
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >

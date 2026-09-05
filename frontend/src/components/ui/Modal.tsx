@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/utils/cn';
 
@@ -9,10 +10,10 @@ interface ModalProps {
 }
 
 export function Modal({ open, children, className }: ModalProps) {
-  return (
+  const content = (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="absolute inset-0 z-50 flex items-center justify-center overflow-y-auto p-4">
           <motion.div
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             initial={{ opacity: 0 }}
@@ -21,7 +22,7 @@ export function Modal({ open, children, className }: ModalProps) {
           />
           <motion.div
             className={cn(
-              'relative z-10 bg-dark-surface-warm rounded-2xl p-6 mx-4 max-w-sm w-full shadow-2xl border border-white/10',
+              'relative z-10 max-h-full w-full max-w-sm overflow-y-auto rounded-2xl border border-white/10 bg-dark-surface-warm p-6 shadow-2xl',
               className,
             )}
             initial={{ scale: 0.9, opacity: 0, y: 20 }}
@@ -35,4 +36,8 @@ export function Modal({ open, children, className }: ModalProps) {
       )}
     </AnimatePresence>
   );
+
+  if (typeof document === 'undefined') return content;
+  const appScreen = document.querySelector('.phone-screen');
+  return appScreen ? createPortal(content, appScreen) : content;
 }

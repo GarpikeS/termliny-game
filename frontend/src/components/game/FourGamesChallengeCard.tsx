@@ -1,6 +1,7 @@
-import { Check, ChevronUp, Gift, Trophy, X } from 'lucide-react';
+import { Check, ChevronUp, Gift, Trophy, Wallet, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import type { GameRewardSource } from '@/types/game';
+import { FREE_HOUR_PRICE } from '@/features/rewards/rewardRules';
 
 interface ChallengeGoal {
   source: GameRewardSource;
@@ -44,6 +45,7 @@ const CHALLENGE_GOALS: readonly ChallengeGoal[] = [
 interface FourGamesChallengeCardProps {
   completedGames: readonly GameRewardSource[];
   count: number;
+  currency: number;
   complete: boolean;
   expanded: boolean;
   attention?: boolean;
@@ -55,6 +57,7 @@ interface FourGamesChallengeCardProps {
 export function FourGamesChallengeCard({
   completedGames,
   count,
+  currency,
   complete,
   expanded,
   attention = false,
@@ -85,8 +88,8 @@ export function FourGamesChallengeCard({
 
   const title = complete ? 'Бесплатный час разблокирован' : 'Выиграй бесплатный час в Термбурге';
   const description = complete
-    ? 'Все четыре этапа пройдены. Оформи награду и получи код для кассы.'
-    : 'Пройди первый этап в каждой из четырёх игр. Можно не подряд — прогресс сохранится.';
+    ? 'Все четыре этапа пройдены. Первый час — за 4 игры и 0 термокоинов. Монеты останутся в кошельке.'
+    : 'Пройди первый этап в каждой из 4 игр. Первый час — за 4 игры и 0 термокоинов. Монеты останутся в кошельке.';
   const actionPath = complete ? '/shop/free-hour?campaign=four-games-v1' : (nextGoal?.path ?? '/games/2048');
   const actionLabel = complete ? 'Получить бесплатный час' : (nextGoal?.cta ?? 'Начать играть');
 
@@ -126,6 +129,18 @@ export function FourGamesChallengeCard({
       <p id="four-game-challenge-description" className="four-game-challenge__description">
         {description}
       </p>
+
+      <div
+        className="four-game-challenge__wallet-goal"
+        data-wallet-goal
+        aria-label={`Следующий час — за ${FREE_HOUR_PRICE} термокоинов. Сейчас в кошельке ${currency.toLocaleString('ru-RU')}`}
+      >
+        <Wallet size={18} aria-hidden="true" />
+        <span>
+          <strong>Следующий час — за {FREE_HOUR_PRICE} термокоинов</strong>
+          <small>Сейчас в кошельке: {currency.toLocaleString('ru-RU')}</small>
+        </span>
+      </div>
 
       <div className="four-game-challenge__progress-copy">
         <span>Пройдено игр</span>
