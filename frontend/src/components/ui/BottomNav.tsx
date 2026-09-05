@@ -67,7 +67,7 @@ export function BottomNav() {
                 {tab.wallet && (
                   <span
                     className={cn(
-                      'absolute -top-2 left-[calc(50%+2px)] max-w-[2.8rem] truncate rounded-full border px-1.5 py-0.5 text-[8px] font-extrabold leading-none tabular-nums shadow-sm',
+                      'absolute -top-0.5 left-[calc(50%+2px)] max-w-[2.8rem] truncate rounded-full border px-1.5 py-0.5 text-[8px] font-extrabold leading-none tabular-nums shadow-sm',
                       progress.currency >= 50
                         ? 'border-emerald-300/50 bg-emerald-900/95 text-emerald-200'
                         : 'border-primary/45 bg-[#292235]/95 text-primary',
@@ -80,14 +80,14 @@ export function BottomNav() {
                   </span>
                 )}
                 {tab.cartBadge && cartCount > 0 && (
-                  <span className="absolute -top-1.5 -left-2.5 bg-red-500 text-white text-[8px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                  <span className="absolute top-0 -left-2.5 bg-red-500 text-white text-[8px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
                     {cartCount > 9 ? '9+' : cartCount}
                   </span>
                 )}
               </span>
-              <span className="text-[10px] font-medium">{tab.label}</span>
+              <span className="text-[10px] font-medium" data-bottom-nav-label>{tab.label}</span>
               {active && (
-                <div className="absolute -bottom-1 w-1 h-1 bg-primary rounded-full" />
+                <div className="absolute -bottom-1 w-1 h-1 bg-primary rounded-full" data-bottom-nav-active-indicator />
               )}
             </button>
           );

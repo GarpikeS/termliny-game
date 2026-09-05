@@ -273,6 +273,77 @@ async function assertStableSlavichLayout(page, engine = 'chromium') {
   assert.equal(await page.getByRole('button', { name: 'Отменить последний ход' }).isDisabled(), false, `Славич: touch-свайп должен работать в ${engine}`);
 }
 
+async function assertBottomNavLayout(page, route, expectedActiveLabel) {
+  const geometry = await page.evaluate(() => {
+    const navElement = document.querySelector('.bottom-nav');
+    const navRect = navElement?.getBoundingClientRect();
+    const items = [...document.querySelectorAll('.bottom-nav__item')].map(item => {
+      const itemRect = item.getBoundingClientRect();
+      const iconRect = item.querySelector('.bottom-nav__icon')?.getBoundingClientRect();
+      const labelRect = item.querySelector('[data-bottom-nav-label]')?.getBoundingClientRect();
+      const indicatorRect = item.querySelector('[data-bottom-nav-active-indicator]')?.getBoundingClientRect();
+      return {
+        ariaLabel: item.getAttribute('aria-label'),
+        ariaCurrent: item.getAttribute('aria-current'),
+        featured: item.classList.contains('bottom-nav__item--featured'),
+        item: {
+          left: itemRect.left,
+          right: itemRect.right,
+          top: itemRect.top,
+          bottom: itemRect.bottom,
+          height: itemRect.height,
+        },
+        icon: iconRect && {
+          left: iconRect.left,
+          right: iconRect.right,
+          top: iconRect.top,
+          bottom: iconRect.bottom,
+          width: iconRect.width,
+          height: iconRect.height,
+        },
+        label: labelRect && { top: labelRect.top, bottom: labelRect.bottom },
+        indicator: indicatorRect && {
+          left: indicatorRect.left,
+          right: indicatorRect.right,
+          top: indicatorRect.top,
+          bottom: indicatorRect.bottom,
+        },
+      };
+    });
+    return {
+      nav: navRect && { left: navRect.left, right: navRect.right, top: navRect.top, bottom: navRect.bottom },
+      items,
+    };
+  });
+
+  assert.ok(geometry.nav, `${route}: bottom nav geometry must exist`);
+  assert.equal(geometry.items.length, 5, `${route}: bottom nav must contain five tabs`);
+  assert.ok(geometry.items.every(item => item.icon && item.label), `${route}: every bottom nav tab must expose icon and label geometry`);
+
+  const reference = geometry.items[0];
+  for (const item of geometry.items.slice(1)) {
+    assert.ok(Math.abs(item.item.height - reference.item.height) <= 1, `${route}: bottom nav tabs must have equal heights`);
+    assert.ok(Math.abs(item.label.top - reference.label.top) <= 1, `${route}: bottom nav labels must share one baseline`);
+    assert.ok(Math.abs(item.icon.height - 32) <= 1, `${route}: every bottom nav icon slot must reserve 32px`);
+  }
+  assert.ok(Math.abs(reference.icon.height - 32) <= 1, `${route}: every bottom nav icon slot must reserve 32px`);
+
+  const featured = geometry.items.find(item => item.featured);
+  assert.ok(featured?.icon, `${route}: featured schedule tab geometry must exist`);
+  assert.ok(Math.abs(featured.icon.width - 32) <= 1, `${route}: schedule highlight must stay compact`);
+  assert.ok(featured.icon.left >= featured.item.left - 1, `${route}: schedule highlight must fit its tab`);
+  assert.ok(featured.icon.right <= featured.item.right + 1, `${route}: schedule highlight must fit its tab`);
+  assert.ok(featured.icon.bottom <= featured.label.top - 2, `${route}: schedule highlight must not overlap its label`);
+
+  const activeItems = geometry.items.filter(item => item.ariaCurrent === 'page');
+  assert.equal(activeItems.length, 1, `${route}: bottom nav must expose one active tab`);
+  const active = activeItems[0];
+  assert.equal(active.ariaLabel, expectedActiveLabel, `${route}: expected bottom nav tab must be active`);
+  assert.ok(active.indicator, `${route}: active bottom nav tab must show its indicator`);
+  assert.ok(active.indicator.left >= active.item.left - 1 && active.indicator.right <= active.item.right + 1, `${route}: active indicator must fit its tab`);
+  assert.ok(active.indicator.top >= geometry.nav.top - 1 && active.indicator.bottom <= geometry.nav.bottom + 1, `${route}: active indicator must stay inside bottom nav`);
+}
+
 async function assertGameShell(page, route, viewport, surfaceSelector, gameTitle, engine = 'chromium') {
   await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded' });
   await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
@@ -286,7 +357,7 @@ async function assertGameShell(page, route, viewport, surfaceSelector, gameTitle
   await status.waitFor();
   await page.getByText(gameTitle, { exact: true }).first().waitFor();
   await page.evaluate(() => document.fonts?.ready);
-  assert.equal(await page.getByRole('button', { name: 'Игры', exact: true }).getAttribute('aria-current'), 'page');
+  await assertBottomNavLayout(page, route, 'Игры');
   assert.equal((await page.locator('[data-global-wallet]').textContent())?.trim(), '37');
   assert.equal((await page.locator('[data-game-wallet-balance]').textContent())?.trim(), '37');
   assert.equal((await page.locator('[data-game-level-current]').textContent())?.trim(), '1');
@@ -388,6 +459,23 @@ try {
       await page.waitForURL('**/shop');
       await context.close();
     }
+  }
+
+  {
+    const viewport = { width: 390, height: 844 };
+    const { context, page, runtimeErrors } = await newPage(browser, viewport);
+    await page.goto(`${baseUrl}/bathhouses`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
+    await page.locator('.bottom-nav').waitFor();
+    await page.evaluate(() => document.fonts?.ready);
+    await assertBottomNavLayout(page, '/bathhouses', 'Термбурги и расписание');
+    await assertNoHorizontalOverflow(page);
+    await page.screenshot({
+      path: path.join(outputRoot, 'bathhouses-nav-390x844.png'),
+      fullPage: true,
+    });
+    assert.deepEqual(runtimeErrors, [], '/bathhouses: runtime errors');
+    await context.close();
   }
 
   {

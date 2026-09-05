@@ -1491,64 +1491,41 @@ h1, h2, h3, h4, h5, h6 {
   animation: bottom-nav-enter 260ms ease-out both;
 }
 
-.bottom-nav__schedule-icon {
-  width: 1.25rem;
-  height: 1.25rem;
-  color: rgb(var(--bottom-nav-schedule-light));
-  isolation: isolate;
-  transform: translateZ(0);
-  transition: transform 180ms ease-out;
+.bottom-nav__icon {
+  height: 2rem;
 }
 
-.bottom-nav__schedule-icon::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  inset: -0.5rem;
-  border: 1px solid rgb(var(--bottom-nav-schedule-accent) / 0.62);
-  border-radius: 999px;
+.bottom-nav__schedule-icon {
+  width: 2rem;
+  border: 1px solid rgb(var(--bottom-nav-schedule-accent) / 0.46);
+  border-radius: 0.7rem;
   background: linear-gradient(
     145deg,
-    rgb(var(--bottom-nav-schedule-accent) / 0.24),
-    rgb(var(--bottom-nav-schedule-accent) / 0.09)
+    rgb(var(--bottom-nav-schedule-accent) / 0.18),
+    rgb(var(--bottom-nav-schedule-accent) / 0.07)
   );
-  box-shadow:
-    0 0 0.7rem rgb(var(--bottom-nav-schedule-accent) / 0.34),
-    inset 0 0 0.55rem rgb(var(--bottom-nav-schedule-light) / 0.12);
-  transition: background-color 180ms ease-out, box-shadow 180ms ease-out;
-}
-
-.bottom-nav__schedule-icon::after {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  inset: -0.78rem;
-  border: 1px solid rgb(var(--bottom-nav-schedule-light) / 0.48);
-  border-radius: 999px;
-  opacity: 0.45;
-  pointer-events: none;
+  color: rgb(var(--bottom-nav-schedule-light));
+  transform: translateZ(0);
+  box-shadow: inset 0 1px rgb(255 255 255 / 0.08);
+  transition:
+    transform 180ms ease-out,
+    color 180ms ease-out,
+    border-color 180ms ease-out,
+    background 180ms ease-out,
+    box-shadow 180ms ease-out;
 }
 
 .bottom-nav__item--featured[aria-current='page'] .bottom-nav__schedule-icon {
   color: #1E1A2E;
-}
-
-.bottom-nav__item--featured[aria-current='page'] .bottom-nav__schedule-icon::before {
-  border-color: rgb(var(--bottom-nav-schedule-light) / 0.92);
+  border-color: rgb(var(--bottom-nav-schedule-light) / 0.86);
   background: linear-gradient(
     145deg,
-    rgb(var(--bottom-nav-schedule-light) / 0.98),
-    rgb(var(--bottom-nav-schedule-accent) / 0.94)
+    rgb(var(--bottom-nav-schedule-light) / 0.96),
+    rgb(var(--bottom-nav-schedule-accent) / 0.88)
   );
   box-shadow:
-    0 0 0.85rem rgb(var(--bottom-nav-schedule-light) / 0.46),
-    inset 0 1px rgb(255 255 255 / 0.22);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .bottom-nav__item--featured:not([aria-current='page']) .bottom-nav__schedule-icon::after {
-    animation: bottom-nav-schedule-invite 1800ms ease-out 6500ms 2;
-  }
+    0 0.2rem 0.65rem rgb(var(--bottom-nav-schedule-accent) / 0.24),
+    inset 0 1px rgb(255 255 255 / 0.2);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -1556,10 +1533,10 @@ h1, h2, h3, h4, h5, h6 {
     transform: translateY(-1px) scale(1.05);
   }
 
-  .bottom-nav__item--featured:hover .bottom-nav__schedule-icon::before {
+  .bottom-nav__item--featured:hover .bottom-nav__schedule-icon {
     box-shadow:
-      0 0 1rem rgb(var(--bottom-nav-schedule-light) / 0.52),
-      inset 0 0 0.6rem rgb(var(--bottom-nav-schedule-light) / 0.18);
+      0 0.25rem 0.7rem rgb(var(--bottom-nav-schedule-accent) / 0.28),
+      inset 0 1px rgb(255 255 255 / 0.12);
   }
 }
 
@@ -2040,12 +2017,6 @@ h1, h2, h3, h4, h5, h6 {
   to { transform: translateY(0); }
 }
 
-@keyframes bottom-nav-schedule-invite {
-  0%, 100% { opacity: 0.45; transform: scale(1); }
-  42% { opacity: 0.95; transform: scale(1.18); }
-  72% { opacity: 0.64; transform: scale(1.08); }
-}
-
 @keyframes game-hub-enter-left {
   from { opacity: 0; transform: translateX(-1.25rem); }
   to { opacity: 1; transform: translateX(0); }
@@ -2488,7 +2459,6 @@ h1, h2, h3, h4, h5, h6 {
   }
 
   .bottom-nav--enter,
-  .bottom-nav__schedule-icon::after,
   .game-hub__currency,
   .game-hub__profile,
   .game-hub__portal::before,
@@ -2498,8 +2468,7 @@ h1, h2, h3, h4, h5, h6 {
     animation: none;
   }
 
-  .bottom-nav__schedule-icon,
-  .bottom-nav__schedule-icon::before {
+  .bottom-nav__schedule-icon {
     transition: none;
   }
 
