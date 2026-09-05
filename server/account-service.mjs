@@ -19,6 +19,8 @@ const MAX_BODY_BYTES = 192 * 1024;
 const MAX_PROGRESS_BYTES = 128 * 1024;
 const DEFAULT_LEGACY_COIN_CAP = 600;
 const GAME_REWARD_SOURCES = ['match3', 'game2048', 'bubbles', 'pet'];
+const FOUR_GAME_CAMPAIGN_ID = 'four-games-v1';
+const FOUR_GAME_CHALLENGE_SOURCES = ['game2048', 'bubbles', 'pet', 'match3'];
 const DAILY_GAME_REWARD_LIMIT = 30;
 const DAILY_TOTAL_REWARD_LIMIT = 120;
 const DEFAULT_CITY = 'Москва';
@@ -43,6 +45,7 @@ const DEFAULT_PROGRESS = Object.freeze({
   levels: {},
   currency: 0,
   dailyGameRewards: null,
+  fourGameChallenge: { version: 1, completedGames: [] },
   lives: 5,
   nextLifeAt: null,
   selectedCharacter: 'yaromir',
@@ -246,6 +249,19 @@ function normalizeDailyRewards(value, now, timeZone) {
   return { date: currentDate, earned: normalized };
 }
 
+function normalizeFourGameChallenge(value, previousValue = null) {
+  const incoming = plainObject(value);
+  const previous = plainObject(previousValue);
+  const completed = new Set([
+    ...(Array.isArray(previous.completedGames) ? previous.completedGames : []),
+    ...(Array.isArray(incoming.completedGames) ? incoming.completedGames : []),
+  ]);
+  return {
+    version: 1,
+    completedGames: FOUR_GAME_CHALLENGE_SOURCES.filter(source => completed.has(source)),
+  };
+}
+
 function mergeLevels(incomingValue, previousValue) {
   const incoming = plainObject(incomingValue);
   const previous = plainObject(previousValue);
@@ -328,6 +344,7 @@ function publicClaim(claim, currentTime) {
     expiresAt: claim.expiresAt,
     nextPurchaseAt: claim.nextPurchaseAt,
     status,
+    ...(claim.campaignId === FOUR_GAME_CAMPAIGN_ID ? { campaignId: FOUR_GAME_CAMPAIGN_ID } : {}),
     ...(claim.redeemedAt ? { redeemedAt: claim.redeemedAt } : {}),
   };
 }
@@ -355,6 +372,7 @@ function sanitizeProgress(inputValue, options) {
     dailyGain += Math.max(0, merged - previousDaily.earned[source]);
   }
   const dailyGameRewards = { date: incomingDaily.date, earned: mergedEarned };
+  const fourGameChallenge = normalizeFourGameChallenge(input.fourGameChallenge, before.fourGameChallenge);
 
   const previousCurrency = safeInteger(before.currency, 0, 1_000_000, 0);
   const requestedCurrency = safeInteger(input.currency, 0, 1_000_000, 0);
@@ -387,6 +405,7 @@ function sanitizeProgress(inputValue, options) {
     levels: mergeLevels(input.levels, before.levels),
     currency,
     dailyGameRewards,
+    fourGameChallenge,
     lives: safeInteger(input.lives, 0, 5, safeInteger(before.lives, 0, 5, 5)),
     nextLifeAt: input.nextLifeAt === null ? null : safeTimestamp(input.nextLifeAt, before.nextLifeAt ?? null),
     selectedCharacter,
@@ -444,6 +463,7 @@ function initializeDatabase(database) {
       phone_last4 TEXT NOT NULL,
       login_name TEXT,
       is_test INTEGER NOT NULL DEFAULT 0 CHECK(is_test IN (0, 1)),
+      allow_legacy_reward_claims INTEGER NOT NULL DEFAULT 0 CHECK(allow_legacy_reward_claims IN (0, 1)),
       name TEXT NOT NULL,
       city TEXT NOT NULL,
       time_zone TEXT NOT NULL DEFAULT 'Europe/Moscow',
@@ -485,12 +505,14 @@ function initializeDatabase(database) {
 
   const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().map(column => column.name));
   const needsTimeZoneMigration = !userColumns.has('time_zone');
+  // Preserve phone-only claims for existing profiles; fresh profiles stay account-bound because registration has no OTP.
   for (const [name, definition] of [
     ['password_salt', 'TEXT'],
     ['password_hash', 'TEXT'],
     ['password_changed_at', 'INTEGER'],
     ['login_name', 'TEXT'],
     ['is_test', 'INTEGER NOT NULL DEFAULT 0'],
+    ['allow_legacy_reward_claims', 'INTEGER NOT NULL DEFAULT 1'],
     ['time_zone', `TEXT NOT NULL DEFAULT '${DEFAULT_TIME_ZONE}'`],
   ]) {
     if (!userColumns.has(name)) database.exec(`ALTER TABLE users ADD COLUMN ${name} ${definition}`);
@@ -545,7 +567,8 @@ export function createAccountService(options) {
     userById: database.prepare('SELECT * FROM users WHERE id = ?'),
     sessionWithUser: database.prepare(`
       SELECT s.token_hash, s.user_id, s.device_hash, s.expires_at, s.last_seen_at,
-             u.id, u.phone_hash, u.phone_last4, u.login_name, u.is_test, u.name, u.city, u.time_zone, u.progress_json,
+             u.id, u.phone_hash, u.phone_last4, u.login_name, u.is_test, u.allow_legacy_reward_claims,
+             u.name, u.city, u.time_zone, u.progress_json,
              u.progress_revision, u.created_at, u.updated_at, u.last_login_at
       FROM sessions s
       JOIN users u ON u.id = s.user_id
@@ -611,8 +634,11 @@ export function createAccountService(options) {
     );
   })() : Promise.resolve();
 
-  async function validClaims(phoneHash) {
+  async function validClaims(account) {
     if (!claimsDataFile) return [];
+    const accountId = cleanText(account?.id, 80);
+    const phoneHash = cleanText(account?.phone_hash, 80);
+    const allowLegacyClaims = Number(account?.allow_legacy_reward_claims) === 1;
     try {
       const redeemedByCode = new Map();
       if (resolvedRedemptionsDataFile) {
@@ -637,8 +663,13 @@ export function createAccountService(options) {
       return raw.split('\n').filter(Boolean).flatMap(line => {
         try {
           const claim = JSON.parse(line);
-          const phone = normalizePhone(claim.phone);
-          if (!phone || hmac(secret, `phone:${phone}`) !== phoneHash) return [];
+          const claimAccountId = cleanText(claim.accountId, 80);
+          if (claimAccountId) {
+            if (!accountId || claimAccountId !== accountId) return [];
+          } else {
+            const phone = normalizePhone(claim.phone);
+            if (!allowLegacyClaims || !phone || hmac(secret, `phone:${phone}`) !== phoneHash) return [];
+          }
           if (!claim.id || !claim.code || seen.has(claim.id)) return [];
           seen.add(claim.id);
           const redemption = redeemedByCode.get(claim.code);
@@ -704,20 +735,68 @@ export function createAccountService(options) {
     return session;
   }
 
+  async function getRewardAccountIdentity(request, expectedAccountId = null) {
+    await ready;
+    const currentTime = now();
+    cleanup(currentTime);
+    const session = sessionFromRequest(request, currentTime);
+    if (!session) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'Войдите в профиль, чтобы получить награду за четыре игры.',
+        code: 'AUTH_REQUIRED',
+      };
+    }
+
+    if (expectedAccountId !== null) {
+      const expected = cleanText(expectedAccountId, 80);
+      if (!expected || expected !== session.row.id) {
+        return {
+          ok: false,
+          status: 409,
+          error: 'Профиль изменился. Обновите страницу перед получением награды.',
+          code: 'ACCOUNT_SESSION_CHANGED',
+        };
+      }
+    }
+
+    const accountPhoneHash = session.row.phone_hash;
+    const allowLegacyClaims = Number(session.row.allow_legacy_reward_claims) === 1;
+    const matchesPhone = value => {
+      const phone = normalizePhone(value);
+      if (!phone || !/^[a-f0-9]{64}$/i.test(accountPhoneHash)) return false;
+      const candidateHash = hmac(secret, `phone:${phone}`);
+      return timingSafeEqual(Buffer.from(candidateHash, 'hex'), Buffer.from(accountPhoneHash, 'hex'));
+    };
+    return {
+      ok: true,
+      accountId: session.row.id,
+      matchesPhone,
+      matchesClaim(claim) {
+        const claimAccountId = cleanText(claim?.accountId, 80);
+        return claimAccountId
+          ? claimAccountId === session.row.id
+          : allowLegacyClaims && matchesPhone(claim?.phone);
+      },
+    };
+  }
+
   async function accountPayload(row) {
-    const claims = await validClaims(row.phone_hash);
-    const stored = parseProgress(row.progress_json);
+    const latest = statements.userById.get(row.id) || row;
+    const claims = await validClaims(latest);
+    const stored = parseProgress(latest.progress_json);
     const progress = sanitizeProgress(stored, {
       now: now(),
-      timeZone: row.time_zone,
+      timeZone: latest.time_zone,
       previous: stored,
       validClaims: claims,
       legacyCoinCap,
     });
     return {
-      account: publicAccount(row),
+      account: publicAccount(latest),
       progress,
-      revision: Number(row.progress_revision),
+      revision: Number(latest.progress_revision),
     };
   }
 
@@ -811,23 +890,22 @@ export function createAccountService(options) {
       throw new AccountHttpError(429, 'На этом устройстве уже зарегистрировано несколько профилей.', { code: 'DEVICE_REGISTRATION_LIMIT' });
     }
 
-    const claims = await validClaims(phoneHash);
     const progress = sanitizeProgress(payload.progress, {
       now: currentTime,
       timeZone,
       initial: true,
       legacyCoinCap,
-      validClaims: claims,
+      validClaims: [],
     });
     const passwordData = await passwordRecord(password);
     const userId = randomUUID();
     database.prepare(`
       INSERT INTO users (
-        id, phone_hash, phone_last4, name, city, time_zone, consent_version, consent_at,
+        id, phone_hash, phone_last4, allow_legacy_reward_claims, name, city, time_zone, consent_version, consent_at,
         registration_device_hash, progress_json, progress_revision,
         password_salt, password_hash, password_changed_at,
         created_at, updated_at, last_login_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
     `).run(
       userId, phoneHash, phone.slice(-4), name, city, timeZone, ACCOUNT_CONSENT_VERSION, currentTime,
       deviceHash, JSON.stringify(progress), passwordData.salt, passwordData.hash, currentTime,
@@ -876,9 +954,37 @@ export function createAccountService(options) {
     }
 
     database.prepare('DELETE FROM auth_attempts WHERE (phone_hash = ? OR ip_hash = ?) AND success = 0').run(phoneHash, ipHash);
-    database.prepare('UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?').run(currentTime, currentTime, user.id);
-    const refreshedUser = statements.userById.get(user.id);
-    const token = issueSession(user.id, deviceHash, currentTime);
+    const latestUserId = withTransaction(database, () => {
+      const latestUser = statements.userById.get(user.id);
+      if (!latestUser) {
+        throw new AccountHttpError(401, 'Неверный телефон, логин или пароль.', { code: 'INVALID_CREDENTIALS' });
+      }
+      const hasChallengeProgress = payload.fourGameChallenge !== undefined;
+      const storedProgress = parseProgress(latestUser.progress_json);
+      const previousChallenge = normalizeFourGameChallenge(storedProgress.fourGameChallenge);
+      const mergedChallenge = hasChallengeProgress
+        ? normalizeFourGameChallenge(payload.fourGameChallenge, previousChallenge)
+        : previousChallenge;
+      const challengeChanged = hasChallengeProgress && (
+        JSON.stringify(storedProgress.fourGameChallenge) !== JSON.stringify(mergedChallenge)
+      );
+      if (challengeChanged) {
+        database.prepare(`
+          UPDATE users SET progress_json = ?, progress_revision = progress_revision + 1,
+            last_login_at = ?, updated_at = ? WHERE id = ?
+        `).run(
+          JSON.stringify({ ...storedProgress, fourGameChallenge: mergedChallenge }),
+          currentTime,
+          currentTime,
+          latestUser.id,
+        );
+      } else {
+        database.prepare('UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?').run(currentTime, currentTime, latestUser.id);
+      }
+      return latestUser.id;
+    });
+    const refreshedUser = statements.userById.get(latestUserId);
+    const token = issueSession(latestUserId, deviceHash, currentTime);
     sendJson(response, 200, { ok: true, ...(await accountPayload(refreshedUser)) }, {
       'Set-Cookie': sessionCookie(token, secureCookies),
     });
@@ -910,21 +1016,84 @@ export function createAccountService(options) {
     if (!payload.progress || typeof payload.progress !== 'object') {
       throw new AccountHttpError(400, 'Не найден прогресс для сохранения.', { field: 'progress' });
     }
-    const currentUser = statements.userById.get(session.row.id);
-    const previous = parseProgress(currentUser.progress_json);
-    const claims = await validClaims(currentUser.phone_hash);
-    const progress = sanitizeProgress(payload.progress, {
+    const expectedAccountId = cleanText(payload.expectedAccountId, 80);
+    if (!expectedAccountId || expectedAccountId !== session.row.id) {
+      throw new AccountHttpError(409, 'Профиль изменился. Обновите страницу перед сохранением.', {
+        code: 'ACCOUNT_SESSION_CHANGED',
+      });
+    }
+    const claims = await validClaims(session.row);
+    const saved = withTransaction(database, () => {
+      const currentUser = statements.userById.get(session.row.id);
+      if (!currentUser) {
+        throw new AccountHttpError(401, 'Войдите в профиль.', { code: 'AUTH_REQUIRED' });
+      }
+      const previous = parseProgress(currentUser.progress_json);
+      const progress = sanitizeProgress(payload.progress, {
+        now: currentTime,
+        timeZone: currentUser.time_zone,
+        previous,
+        validClaims: claims,
+        legacyCoinCap,
+      });
+      const revision = Number(currentUser.progress_revision) + 1;
+      database.prepare(`
+        UPDATE users SET progress_json = ?, progress_revision = ?, updated_at = ? WHERE id = ?
+      `).run(JSON.stringify(progress), revision, currentTime, currentUser.id);
+      return { progress, revision };
+    });
+    sendJson(response, 200, { ok: true, ...saved, savedAt: currentTime });
+  }
+
+  async function verifyRewardCampaign(request, { campaignId, phone, expectedAccountId }) {
+    await ready;
+    if (campaignId !== FOUR_GAME_CAMPAIGN_ID) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'Неизвестная акция.',
+        code: 'UNKNOWN_REWARD_CAMPAIGN',
+      };
+    }
+
+    const identity = await getRewardAccountIdentity(request, expectedAccountId);
+    if (!identity.ok) return identity;
+    if (!identity.matchesPhone(phone)) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'Телефон должен совпадать с номером в профиле.',
+        field: 'phone',
+        code: 'ACCOUNT_PHONE_MISMATCH',
+      };
+    }
+
+    const currentTime = now();
+    const currentUser = statements.userById.get(identity.accountId);
+    const stored = parseProgress(currentUser.progress_json);
+    const progress = sanitizeProgress(stored, {
       now: currentTime,
       timeZone: currentUser.time_zone,
-      previous,
-      validClaims: claims,
+      previous: stored,
       legacyCoinCap,
     });
-    const revision = Number(currentUser.progress_revision) + 1;
-    database.prepare(`
-      UPDATE users SET progress_json = ?, progress_revision = ?, updated_at = ? WHERE id = ?
-    `).run(JSON.stringify(progress), revision, currentTime, currentUser.id);
-    sendJson(response, 200, { ok: true, progress, revision, savedAt: currentTime });
+    const completedGames = progress.fourGameChallenge.completedGames;
+    if (!FOUR_GAME_CHALLENGE_SOURCES.every(source => completedGames.includes(source))) {
+      return {
+        ok: false,
+        status: 409,
+        error: 'Сначала пройдите по одному уровню в каждой из четырёх игр.',
+        code: 'CAMPAIGN_INCOMPLETE',
+        completedGames,
+      };
+    }
+
+    return {
+      ok: true,
+      accountId: currentUser.id,
+      completedGames,
+      matchesClaim: identity.matchesClaim,
+    };
   }
 
   async function handle(request, response, url) {
@@ -974,6 +1143,8 @@ export function createAccountService(options) {
   return {
     ready,
     handle,
+    getRewardAccountIdentity,
+    verifyRewardCampaign,
     matches(pathname) {
       return pathname.startsWith('/api/auth/') || pathname === '/api/account/progress';
     },

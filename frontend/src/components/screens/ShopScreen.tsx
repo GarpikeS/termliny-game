@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { ArrowLeft, CalendarClock, ShoppingBag, ShoppingCart, Sparkles, Ticket } from 'lucide-react';
@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { useGameContext } from '@/store/GameContext';
 import { getProductsByCategory, type Product } from '@/data/shopData';
 import { activeFreeHourClaim, formatRewardDate, isRewardClaimRedeemed } from '@/features/rewards/rewardRules';
+import { getFreeHourStatus } from '@/features/rewards/rewardApi';
 import { cn } from '@/utils/cn';
 import { GAME_NAMES } from '@/data/gameNames';
 
@@ -22,13 +23,38 @@ function coinPrice(price: number) {
 
 export function ShopScreen() {
   const navigate = useNavigate();
-  const { progress, addToCart, buyWithCoins } = useGameContext();
+  const { progress, addToCart, buyWithCoins, restoreRewardClaim } = useGameContext();
   const [activeTab, setActiveTab] = useState<Product['category']>('tickets');
   const [notice, setNotice] = useState('');
+  const [serverRewardBlock, setServerRewardBlock] = useState<{ blocked: boolean; until: number | null }>({
+    blocked: false,
+    until: null,
+  });
 
   const items = getProductsByCategory(activeTab);
   const cartCount = progress.cart.reduce((sum, item) => sum + item.quantity, 0);
-  const activeReward = activeFreeHourClaim(progress.rewardClaims);
+  const activeReward = activeFreeHourClaim(
+    progress.rewardClaims.filter(claim => claim.campaignId === undefined),
+  );
+  const activeCampaignCooldown = activeFreeHourClaim(
+    progress.rewardClaims.filter(claim => claim.campaignId !== undefined),
+  );
+  const rewardBlocked = Boolean(activeCampaignCooldown) || serverRewardBlock.blocked;
+  const rewardCooldownUntil = activeCampaignCooldown?.nextPurchaseAt ?? serverRewardBlock.until;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getFreeHourStatus(controller.signal)
+      .then(status => {
+        if (status.claim) restoreRewardClaim(status.claim);
+        setServerRewardBlock({
+          blocked: !status.available && !status.claim,
+          until: !status.available && !status.claim ? (status.nextPurchaseAt ?? null) : null,
+        });
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [restoreRewardClaim]);
 
   const handleBuy = (product: Product) => {
     setNotice('');
@@ -148,6 +174,18 @@ export function ShopScreen() {
                       <strong>{isRewardClaimRedeemed(activeReward)
                         ? `Использован · новый час после ${formatRewardDate(activeReward.nextPurchaseAt)}`
                         : `Действует до ${formatRewardDate(activeReward.expiresAt)}`}</strong>
+                    </button>
+                  ) : isWeeklyReward && rewardBlocked ? (
+                    <button
+                      type="button"
+                      className="shop-reward-active"
+                      onClick={() => navigate(activeCampaignCooldown ? '/profile' : '/shop/free-hour')}
+                    >
+                      <span>{activeCampaignCooldown ? 'Бесплатный час уже получен' : 'Бесплатный час пока недоступен'}</span>
+                      <strong>
+                        {activeCampaignCooldown ? 'Код находится в профиле' : 'Повторная выдача временно закрыта'}
+                        {rewardCooldownUntil ? ` · новый час после ${formatRewardDate(rewardCooldownUntil)}` : ''}
+                      </strong>
                     </button>
                   ) : (
                     <div className="shop-product-card__action">

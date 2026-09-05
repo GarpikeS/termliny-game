@@ -104,10 +104,11 @@ test('existing accounts keep their city timezone when the timezone column is add
   const service = await startTestService(tempRoot, () => currentTime);
   try {
     const migratedDatabase = new DatabaseSync(databaseFile, { readOnly: true });
-    const migrated = migratedDatabase.prepare('SELECT city, time_zone FROM users WHERE id = ?').get('legacy-user');
+    const migrated = migratedDatabase.prepare('SELECT city, time_zone, allow_legacy_reward_claims FROM users WHERE id = ?').get('legacy-user');
     migratedDatabase.close();
     assert.equal(migrated.city, 'Зеленогорск');
     assert.equal(migrated.time_zone, 'Asia/Krasnoyarsk');
+    assert.equal(migrated.allow_legacy_reward_claims, 1);
   } finally {
     await service.close();
     await rm(tempRoot, { recursive: true, force: true });
@@ -194,13 +195,15 @@ test('phone/password registration, session, progress sync, logout and cross-devi
     assert.equal(registered.account.phoneMasked, '+7 ••• •••-45-67');
     assert.equal(registered.progress.currency, 181);
     assert.equal(registered.progress.dailyGameRewards.date, '2026-08-16');
+    assert.deepEqual(registered.progress.fourGameChallenge, { version: 1, completedGames: [] });
     assert.equal(JSON.stringify(registered).includes(TEST_PASSWORD), false);
 
     const database = new DatabaseSync(path.join(tempRoot, 'accounts.sqlite'), { readOnly: true });
-    const storedAccount = database.prepare('SELECT city, time_zone FROM users WHERE id = ?').get(registered.account.id);
+    const storedAccount = database.prepare('SELECT city, time_zone, allow_legacy_reward_claims FROM users WHERE id = ?').get(registered.account.id);
     database.close();
     assert.equal(storedAccount.city, 'Владивосток');
     assert.equal(storedAccount.time_zone, 'Asia/Vladivostok');
+    assert.equal(storedAccount.allow_legacy_reward_claims, 0);
 
     const duplicate = await fetch(`${origin}/api/auth/register`, {
       method: 'POST',
@@ -222,7 +225,7 @@ test('phone/password registration, session, progress sync, logout and cross-devi
     const firstSync = await fetch(`${origin}/api/account/progress`, {
       method: 'PUT',
       headers: authHeaders({ Cookie: firstSessionCookie }),
-      body: JSON.stringify({ progress: tampered }),
+      body: JSON.stringify({ progress: tampered, expectedAccountId: registered.account.id }),
     });
     assert.equal(firstSync.status, 200);
     assert.equal((await firstSync.json()).progress.currency, 301);
@@ -230,9 +233,17 @@ test('phone/password registration, session, progress sync, logout and cross-devi
     const repeatedSync = await fetch(`${origin}/api/account/progress`, {
       method: 'PUT',
       headers: authHeaders({ Cookie: firstSessionCookie }),
-      body: JSON.stringify({ progress: tampered }),
+      body: JSON.stringify({ progress: tampered, expectedAccountId: registered.account.id }),
     });
     assert.equal((await repeatedSync.json()).progress.currency, 301);
+
+    const wrongAccountSync = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: firstSessionCookie }),
+      body: JSON.stringify({ progress: tampered, expectedAccountId: 'another-account' }),
+    });
+    assert.equal(wrongAccountSync.status, 409);
+    assert.equal((await wrongAccountSync.json()).code, 'ACCOUNT_SESSION_CHANGED');
 
     const logout = await fetch(`${origin}/api/auth/logout`, {
       method: 'POST', headers: { Origin: ALLOWED_ORIGIN, Cookie: firstSessionCookie },
@@ -251,6 +262,134 @@ test('phone/password registration, session, progress sync, logout and cross-devi
     const loggedIn = await login.json();
     assert.equal(loggedIn.account.name, 'Анна');
     assert.equal(loggedIn.progress.currency, 301);
+  } finally {
+    await service.close();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('four-game challenge progress is allowlisted and cannot regress across stale or parallel sync', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'termburg-account-four-games-'));
+  const currentTime = Date.UTC(2026, 7, 20, 12, 0, 0);
+  const service = await startTestService(tempRoot, () => currentTime);
+  const origin = `http://127.0.0.1:${service.port}`;
+  const progress = baseProgress('2026-08-20');
+  progress.fourGameChallenge = {
+    version: 999,
+    completedGames: ['pet', 'unknown-game', 'pet'],
+  };
+
+  try {
+    const register = await fetch(`${origin}/api/auth/register`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        phone: '8 999 555-12-34',
+        password: TEST_PASSWORD,
+        name: 'Мария',
+        city: 'Казань',
+        timeZone: 'Europe/Moscow',
+        consent: true,
+        consentVersion: 'account-2026-08-15',
+        deviceId: 'device-four-game-test-0001',
+        progress,
+      }),
+    });
+    assert.equal(register.status, 201);
+    const cookie = cookieFrom(register);
+    const registered = await register.json();
+    assert.deepEqual(registered.progress.fourGameChallenge, {
+      version: 1,
+      completedGames: ['pet'],
+    });
+
+    const disjointSyncs = await Promise.all([
+      fetch(`${origin}/api/account/progress`, {
+        method: 'PUT',
+        headers: authHeaders({ Cookie: cookie }),
+        body: JSON.stringify({
+          expectedAccountId: registered.account.id,
+          progress: {
+            ...registered.progress,
+            fourGameChallenge: { version: 1, completedGames: ['game2048', 'not-a-game'] },
+          },
+        }),
+      }),
+      fetch(`${origin}/api/account/progress`, {
+        method: 'PUT',
+        headers: authHeaders({ Cookie: cookie }),
+        body: JSON.stringify({
+          expectedAccountId: registered.account.id,
+          progress: {
+            ...registered.progress,
+            fourGameChallenge: { version: 1, completedGames: ['match3'] },
+          },
+        }),
+      }),
+    ]);
+    assert.deepEqual(disjointSyncs.map(response => response.status), [200, 200]);
+    await Promise.all(disjointSyncs.map(response => response.json()));
+
+    const afterParallelSync = await fetch(`${origin}/api/auth/me`, { headers: { Cookie: cookie } });
+    assert.equal(afterParallelSync.status, 200);
+    const afterParallelSaved = await afterParallelSync.json();
+    assert.deepEqual(afterParallelSaved.progress.fourGameChallenge, {
+      version: 1,
+      completedGames: ['game2048', 'pet', 'match3'],
+    });
+
+    const staleSync = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: cookie }),
+      body: JSON.stringify({ progress: registered.progress, expectedAccountId: registered.account.id }),
+    });
+    assert.equal(staleSync.status, 200);
+    const staleSaved = await staleSync.json();
+    assert.deepEqual(staleSaved.progress.fourGameChallenge, {
+      version: 1,
+      completedGames: ['game2048', 'pet', 'match3'],
+    });
+
+    const login = await fetch(`${origin}/api/auth/login`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        identifier: '8 999 555-12-34',
+        password: TEST_PASSWORD,
+        deviceId: 'device-four-game-test-0002',
+        fourGameChallenge: {
+          version: 42,
+          completedGames: ['bubbles', 'unknown-game'],
+        },
+        progress: {
+          currency: 999_999,
+          fourGameChallenge: { version: 1, completedGames: [] },
+        },
+      }),
+    });
+    assert.equal(login.status, 200);
+    const loggedIn = await login.json();
+    assert.deepEqual(loggedIn.progress.fourGameChallenge, {
+      version: 1,
+      completedGames: ['game2048', 'bubbles', 'pet', 'match3'],
+    });
+    assert.equal(loggedIn.progress.currency, registered.progress.currency);
+    assert.equal(loggedIn.revision, staleSaved.revision + 1);
+
+    const repeatedLogin = await fetch(`${origin}/api/auth/login`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        identifier: '8 999 555-12-34',
+        password: TEST_PASSWORD,
+        deviceId: 'device-four-game-test-0003',
+        fourGameChallenge: { version: 1, completedGames: [] },
+      }),
+    });
+    assert.equal(repeatedLogin.status, 200);
+    const repeatedLoginBody = await repeatedLogin.json();
+    assert.deepEqual(repeatedLoginBody.progress.fourGameChallenge, loggedIn.progress.fourGameChallenge);
+    assert.equal(repeatedLoginBody.revision, loggedIn.revision);
   } finally {
     await service.close();
     await rm(tempRoot, { recursive: true, force: true });

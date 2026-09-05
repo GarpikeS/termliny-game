@@ -1,5 +1,6 @@
 import type { RewardClaim } from '@/types/game';
 import { getDeviceId } from '@/features/account/device';
+import { FOUR_GAME_CHALLENGE_ID } from './fourGameChallenge';
 
 export const REWARD_CONSENT_VERSION = 'reward-2026-08-12';
 
@@ -17,6 +18,8 @@ export interface FreeHourClaimPayload {
   consent: true;
   balance: number;
   source: string;
+  campaignId?: typeof FOUR_GAME_CHALLENGE_ID;
+  expectedAccountId?: string;
 }
 
 interface RewardErrorBody {
@@ -53,10 +56,17 @@ async function readBody(response: Response): Promise<Record<string, unknown>> {
   }
 }
 
-export async function getFreeHourStatus(signal?: AbortSignal): Promise<RewardStatus> {
+export async function getFreeHourStatus(
+  signal?: AbortSignal,
+  campaignId?: typeof FOUR_GAME_CHALLENGE_ID,
+  expectedAccountId?: string,
+): Promise<RewardStatus> {
   let response: Response;
   try {
-    response = await fetch(`/api/rewards/free-hour?deviceId=${encodeURIComponent(getDeviceId())}`, { signal });
+    const params = new URLSearchParams({ deviceId: getDeviceId() });
+    if (campaignId) params.set('campaignId', campaignId);
+    if (campaignId && expectedAccountId) params.set('expectedAccountId', expectedAccountId);
+    response = await fetch(`/api/rewards/free-hour?${params.toString()}`, { signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new RewardApiError('Нет связи с сервером наград. Проверьте интернет.');

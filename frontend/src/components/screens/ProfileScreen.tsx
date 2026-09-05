@@ -20,6 +20,11 @@ import {
 } from '@/data/economy';
 import { cn } from '@/utils/cn';
 import { useAuth } from '@/features/account/AuthContext';
+import {
+  GUEST_PROGRESS_OWNER,
+  accountProgressOwner,
+  loadProgressOwner,
+} from '@/store/storage';
 
 const achievements = [
   { name: 'Новичок', desc: 'Пройти 1 уровень', icon: Trophy, color: '#6AABDA', check: (p: Stat) => p.completedLevels >= 1 },
@@ -58,6 +63,14 @@ export function ProfileScreen() {
   const [screenOpenedAt] = useState(Date.now);
   const [logoutPending, setLogoutPending] = useState(false);
   const [accountError, setAccountError] = useState('');
+  const expectedProgressOwner = authStatus === 'authenticated' && authSession
+    ? accountProgressOwner(authSession.account.id)
+    : authStatus === 'guest' ? GUEST_PROGRESS_OWNER : null;
+  const progressScopeVerified = expectedProgressOwner !== null && loadProgressOwner() === expectedProgressOwner;
+  const visibleOrders = progressScopeVerified ? progress.orders : [];
+  const visibleRewardClaims = progressScopeVerified
+    ? progress.rewardClaims.filter(claim => claim.campaignId === undefined || authStatus === 'authenticated')
+    : [];
 
   const handleLogout = async () => {
     const confirmed = window.confirm('Выйти из профиля? Прогресс останется в профиле, а на этом устройстве откроется новая гостевая игра.');
@@ -303,7 +316,7 @@ export function ProfileScreen() {
             <h3 className="font-heading text-xs font-semibold uppercase tracking-wider text-primary mb-3">
               Мои билеты и заказы
             </h3>
-            {progress.orders.length === 0 && progress.rewardClaims.length === 0 ? (
+            {visibleOrders.length === 0 && visibleRewardClaims.length === 0 ? (
               <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
                   <Ticket size={18} className="text-primary" />
@@ -315,7 +328,7 @@ export function ProfileScreen() {
               </div>
             ) : (
               <div className="space-y-2">
-                {[...progress.rewardClaims].reverse().map(claim => {
+                {[...visibleRewardClaims].reverse().map(claim => {
                   const redeemed = isRewardClaimRedeemed(claim);
                   const active = !redeemed && claim.status !== 'expired' && claim.expiresAt > screenOpenedAt;
                   const statusLabel = redeemed ? 'Использован' : active ? 'Активен' : 'Сгорел';
@@ -346,7 +359,7 @@ export function ProfileScreen() {
                     </div>
                   );
                 })}
-                {progress.orders.map(order => (
+                {visibleOrders.map(order => (
                   <div
                     key={order.id}
                     className="bg-white/5 border border-white/10 rounded-xl p-3"

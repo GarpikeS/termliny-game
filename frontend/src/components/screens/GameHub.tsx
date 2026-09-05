@@ -1,9 +1,23 @@
+import { useEffect, useState } from 'react';
+import { useReducedMotion } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { useGameContext } from '@/store/GameContext';
+import { FourGamesChallengeCard } from '@/components/game/FourGamesChallengeCard';
 import { SceneCanvas } from '@/components/ui/SceneCanvas';
 import { CurrencyDisplay } from '@/components/ui/CurrencyDisplay';
 import { PlayerStatusButton } from '@/components/ui/PlayerStatusButton';
 import { GAME_NAMES } from '@/data/gameNames';
+import {
+  FOUR_GAME_CHALLENGE_ID,
+  FOUR_GAME_CHALLENGE_SOURCES,
+  getFourGameChallengeCount,
+  isFourGameChallengeComplete,
+} from '@/features/rewards/fourGameChallenge';
+
+const CHALLENGE_INTRO_FLAG = 'four-games-challenge-intro-v1';
+const CHALLENGE_COMPLETE_FLAG = 'four-games-challenge-complete-v1';
+const PORTAL_TOUR_END_DELAY_MS = 4_300;
+const REDUCED_MOTION_REVEAL_DELAY_MS = 200;
 
 // Positions measured from 894x1760 source image → % of image
 const portals = [
@@ -15,7 +29,52 @@ const portals = [
 
 export function GameHub() {
   const navigate = useNavigate();
-  const { progress } = useGameContext();
+  const reducedMotion = useReducedMotion();
+  const { progress, markTutorialSeen } = useGameContext();
+  const completedGames = FOUR_GAME_CHALLENGE_SOURCES.filter(source => (
+    progress.fourGameChallenge.completedGames.includes(source)
+  ));
+  const completedCount = getFourGameChallengeCount(progress.fourGameChallenge);
+  const challengeComplete = isFourGameChallengeComplete(progress.fourGameChallenge);
+  const introSeen = progress.tutorialFlags.includes(CHALLENGE_INTRO_FLAG);
+  const completionSeen = progress.tutorialFlags.includes(CHALLENGE_COMPLETE_FLAG);
+  const hasChallengeClaim = progress.rewardClaims.some(claim => claim.campaignId === FOUR_GAME_CHALLENGE_ID);
+  const [introReady, setIntroReady] = useState(() => introSeen || challengeComplete);
+  const [manuallyExpanded, setManuallyExpanded] = useState(false);
+  const [introDismissed, setIntroDismissed] = useState(false);
+  const [completionDismissed, setCompletionDismissed] = useState(false);
+  const autoIntroExpanded = introReady && !introSeen && !challengeComplete && !introDismissed;
+  const autoCompletionExpanded = challengeComplete && !completionSeen && !completionDismissed;
+  const challengeVisible = !hasChallengeClaim && (introReady || introSeen || challengeComplete);
+  const challengeExpanded = manuallyExpanded || autoIntroExpanded || autoCompletionExpanded;
+  const challengeAttention = !manuallyExpanded && (autoIntroExpanded || autoCompletionExpanded);
+
+  useEffect(() => {
+    if (hasChallengeClaim || challengeComplete || introSeen || introReady) return;
+
+    const timer = window.setTimeout(() => {
+      setIntroReady(true);
+    }, reducedMotion ? REDUCED_MOTION_REVEAL_DELAY_MS : PORTAL_TOUR_END_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [challengeComplete, hasChallengeClaim, introReady, introSeen, reducedMotion]);
+
+  const dismissChallenge = () => {
+    markTutorialSeen(challengeComplete ? CHALLENGE_COMPLETE_FLAG : CHALLENGE_INTRO_FLAG);
+    setManuallyExpanded(false);
+    if (challengeComplete) setCompletionDismissed(true);
+    else setIntroDismissed(true);
+  };
+
+  const openChallenge = () => {
+    setManuallyExpanded(true);
+  };
+
+  const followChallengeAction = (path: string) => {
+    markTutorialSeen(challengeComplete ? CHALLENGE_COMPLETE_FLAG : CHALLENGE_INTRO_FLAG);
+    setManuallyExpanded(false);
+    navigate(path);
+  };
 
   return (
     <div className="h-full relative bg-[#080c08] overflow-hidden">
@@ -44,6 +103,8 @@ export function GameHub() {
               height: `${portal.h}%`,
               transform: 'translate(-50%, -50%)',
             }}
+            disabled={challengeExpanded}
+            aria-hidden={challengeExpanded || undefined}
             onClick={() => navigate(portal.path)}
             aria-label={`Открыть игру ${portal.title}`}
           />
@@ -60,6 +121,8 @@ export function GameHub() {
             height: '18%',
             transform: 'translate(-50%, -50%)',
           }}
+          disabled={challengeExpanded}
+          aria-hidden={challengeExpanded || undefined}
           onClick={() => navigate('/collection')}
           aria-label="Открыть коллекцию термлинов"
         >
@@ -83,6 +146,19 @@ export function GameHub() {
         </div>
         <PlayerStatusButton />
       </div>
+
+      {challengeVisible && (
+        <FourGamesChallengeCard
+          completedGames={completedGames}
+          count={completedCount}
+          complete={challengeComplete}
+          expanded={challengeExpanded}
+          attention={challengeAttention}
+          onExpand={openChallenge}
+          onDismiss={dismissChallenge}
+          onAction={followChallengeAction}
+        />
+      )}
     </div>
   );
 }

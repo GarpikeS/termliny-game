@@ -119,7 +119,14 @@ test('free hour is stored for seven days and cannot be claimed again by phone or
 
     const status = await fetch(`${origin}/api/rewards/free-hour?deviceId=${basePayload.deviceId}`);
     assert.equal(status.status, 200);
-    assert.equal((await status.json()).available, false);
+    const statusBody = await status.json();
+    assert.equal(statusBody.available, false);
+    assert.equal(statusBody.claim.id, firstBody.claim.id);
+    assert.equal(statusBody.claim.code, firstBody.claim.code);
+
+    const campaignStatus = await fetch(`${origin}/api/rewards/free-hour?deviceId=${basePayload.deviceId}&campaignId=four-games-v1`);
+    assert.equal(campaignStatus.status, 401);
+    assert.equal((await campaignStatus.json()).code, 'AUTH_REQUIRED');
 
     const duplicatePhone = await fetch(`${origin}/api/rewards/free-hour`, {
       method: 'POST',
@@ -127,7 +134,10 @@ test('free hour is stored for seven days and cannot be claimed again by phone or
       body: JSON.stringify({ ...basePayload, deviceId: 'device-9876543210-wxyz' }),
     });
     assert.equal(duplicatePhone.status, 409);
-    assert.equal((await duplicatePhone.json()).code, 'REWARD_COOLDOWN');
+    const duplicatePhoneBody = await duplicatePhone.json();
+    assert.equal(duplicatePhoneBody.code, 'REWARD_COOLDOWN');
+    assert.equal(duplicatePhoneBody.claim.id, firstBody.claim.id);
+    assert.equal(duplicatePhoneBody.claim.code, firstBody.claim.code);
 
     currentTime += 7 * 24 * 60 * 60 * 1000 + 1;
     const nextWeek = await fetch(`${origin}/api/rewards/free-hour`, {
@@ -158,6 +168,281 @@ test('free hour is stored for seven days and cannot be claimed again by phone or
     assert.match(exportBody, /TB-[A-F0-9]{8}/);
     assert.match(exportBody, /Анна/);
     assert.match(exportBody, /expired/);
+  } finally {
+    await service.close();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('four-game campaign keeps codes private and grants one lifetime promotional claim under concurrency', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'termburg-four-game-campaign-'));
+  const dataFile = path.join(tempRoot, 'feedback.jsonl');
+  const claimsDataFile = path.join(tempRoot, 'reward-claims.jsonl');
+  let currentTime = Date.UTC(2026, 7, 21, 12, 0, 0);
+  const service = await startFeedbackService({
+    dataFile,
+    claimsDataFile,
+    host: '127.0.0.1',
+    port: 0,
+    allowedOrigin: 'https://tbgame.ru',
+    rateLimit: 20,
+    logger: { info() {}, error() {} },
+    now: () => currentTime,
+    accountOptions: {
+      databaseFile: path.join(tempRoot, 'accounts.sqlite'),
+      authSecret: 'synthetic-test-secret-that-is-long-enough-for-campaign-authentication',
+      secureCookies: true,
+    },
+  });
+  const origin = `http://127.0.0.1:${service.port}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    Origin: 'https://tbgame.ru',
+    'User-Agent': 'Termburg Campaign QA',
+  };
+  const rewardPayload = {
+    name: 'Ольга',
+    phone: '8 999 444-55-66',
+    age: 38,
+    city: 'Москва',
+    deviceId: 'device-four-game-claim-0001',
+    consent: true,
+    consentVersion: 'reward-2026-08-12',
+    balance: 0,
+    source: 'four-game-hub',
+    campaignId: 'four-games-v1',
+  };
+
+  try {
+    const unknownCampaign = await fetch(`${origin}/api/rewards/free-hour`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...rewardPayload, campaignId: 'unknown-campaign' }),
+    });
+    assert.equal(unknownCampaign.status, 400);
+    assert.equal((await unknownCampaign.json()).code, 'UNKNOWN_REWARD_CAMPAIGN');
+
+    const guestClaim = await fetch(`${origin}/api/rewards/free-hour`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(rewardPayload),
+    });
+    assert.equal(guestClaim.status, 401);
+    assert.equal((await guestClaim.json()).code, 'AUTH_REQUIRED');
+
+    const register = await fetch(`${origin}/api/auth/register`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        phone: rewardPayload.phone,
+        password: '4321',
+        name: rewardPayload.name,
+        city: rewardPayload.city,
+        timeZone: 'Europe/Moscow',
+        consent: true,
+        consentVersion: 'account-2026-08-15',
+        deviceId: 'device-four-game-account-0001',
+        progress: {
+          fourGameChallenge: {
+            version: 1,
+            completedGames: ['match3', 'game2048', 'bubbles'],
+          },
+        },
+      }),
+    });
+    assert.equal(register.status, 201);
+    const sessionCookie = String(register.headers.get('set-cookie') || '').split(';')[0];
+    const registered = await register.json();
+    rewardPayload.expectedAccountId = registered.account.id;
+
+    const switchedAccountGet = await fetch(
+      `${origin}/api/rewards/free-hour?campaignId=four-games-v1&expectedAccountId=another-account`,
+      { headers: { Cookie: sessionCookie } },
+    );
+    assert.equal(switchedAccountGet.status, 409);
+    const switchedAccountGetBody = await switchedAccountGet.json();
+    assert.equal(switchedAccountGetBody.code, 'ACCOUNT_SESSION_CHANGED');
+    assert.equal('claim' in switchedAccountGetBody, false);
+
+    const switchedAccountPost = await fetch(`${origin}/api/rewards/free-hour`, {
+      method: 'POST',
+      headers: { ...headers, Cookie: sessionCookie },
+      body: JSON.stringify({ ...rewardPayload, expectedAccountId: 'another-account' }),
+    });
+    assert.equal(switchedAccountPost.status, 409);
+    const switchedAccountPostBody = await switchedAccountPost.json();
+    assert.equal(switchedAccountPostBody.code, 'ACCOUNT_SESSION_CHANGED');
+    assert.equal('claim' in switchedAccountPostBody, false);
+
+    const incomplete = await fetch(`${origin}/api/rewards/free-hour`, {
+      method: 'POST',
+      headers: { ...headers, Cookie: sessionCookie },
+      body: JSON.stringify(rewardPayload),
+    });
+    assert.equal(incomplete.status, 409);
+    const incompleteBody = await incomplete.json();
+    assert.equal(incompleteBody.code, 'CAMPAIGN_INCOMPLETE');
+    assert.deepEqual(incompleteBody.completedGames, ['game2048', 'bubbles', 'match3']);
+
+    const mismatchedPhone = await fetch(`${origin}/api/rewards/free-hour`, {
+      method: 'POST',
+      headers: { ...headers, Cookie: sessionCookie },
+      body: JSON.stringify({ ...rewardPayload, phone: '8 999 000-00-01' }),
+    });
+    assert.equal(mismatchedPhone.status, 403);
+    assert.equal((await mismatchedPhone.json()).code, 'ACCOUNT_PHONE_MISMATCH');
+
+    const completedProgress = {
+      ...registered.progress,
+      fourGameChallenge: { version: 1, completedGames: ['pet'] },
+    };
+    const progressSync = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: { ...headers, Cookie: sessionCookie },
+      body: JSON.stringify({ progress: completedProgress, expectedAccountId: registered.account.id }),
+    });
+    assert.equal(progressSync.status, 200);
+    assert.deepEqual((await progressSync.json()).progress.fourGameChallenge.completedGames, [
+      'game2048', 'bubbles', 'pet', 'match3',
+    ]);
+
+    const concurrentClaims = await Promise.all([
+      fetch(`${origin}/api/rewards/free-hour`, {
+        method: 'POST',
+        headers: { ...headers, Cookie: sessionCookie },
+        body: JSON.stringify(rewardPayload),
+      }),
+      fetch(`${origin}/api/rewards/free-hour`, {
+        method: 'POST',
+        headers: { ...headers, Cookie: sessionCookie },
+        body: JSON.stringify(rewardPayload),
+      }),
+    ]);
+    assert.deepEqual(concurrentClaims.map(response => response.status).sort(), [201, 409]);
+    const awardedBody = await concurrentClaims.find(response => response.status === 201).json();
+    const concurrentDuplicateBody = await concurrentClaims.find(response => response.status === 409).json();
+    assert.equal(awardedBody.claim.campaignId, 'four-games-v1');
+    assert.equal('accountId' in awardedBody.claim, false);
+    assert.equal(concurrentDuplicateBody.code, 'CAMPAIGN_ALREADY_CLAIMED');
+    assert.equal(concurrentDuplicateBody.claim.id, awardedBody.claim.id);
+
+    const privateCampaignStatus = await fetch(`${origin}/api/rewards/free-hour?deviceId=${rewardPayload.deviceId}&campaignId=four-games-v1`);
+    assert.equal(privateCampaignStatus.status, 401);
+    const privateCampaignStatusBody = await privateCampaignStatus.json();
+    assert.equal(privateCampaignStatusBody.code, 'AUTH_REQUIRED');
+    assert.equal('claim' in privateCampaignStatusBody, false);
+
+    const campaignStatus = await fetch(
+      `${origin}/api/rewards/free-hour?deviceId=device-does-not-select-claim&campaignId=four-games-v1&expectedAccountId=${registered.account.id}`,
+      { headers: { Cookie: sessionCookie } },
+    );
+    assert.equal(campaignStatus.status, 200);
+    const campaignStatusBody = await campaignStatus.json();
+    assert.equal(campaignStatusBody.available, false);
+    assert.equal(campaignStatusBody.claim.id, awardedBody.claim.id);
+    assert.equal(campaignStatusBody.claim.campaignId, 'four-games-v1');
+
+    const legacyStatus = await fetch(`${origin}/api/rewards/free-hour?deviceId=${rewardPayload.deviceId}`);
+    assert.equal(legacyStatus.status, 200);
+    const legacyStatusBody = await legacyStatus.json();
+    assert.equal(legacyStatusBody.available, false);
+    assert.equal('claim' in legacyStatusBody, false);
+    assert.equal(JSON.stringify(legacyStatusBody).includes(awardedBody.claim.code), false);
+
+    const regularDuringCooldown = await fetch(`${origin}/api/rewards/free-hour`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...rewardPayload, campaignId: undefined, balance: 50 }),
+    });
+    assert.equal(regularDuringCooldown.status, 409);
+    const regularDuringCooldownBody = await regularDuringCooldown.json();
+    assert.equal(regularDuringCooldownBody.code, 'REWARD_COOLDOWN');
+    assert.equal('claim' in regularDuringCooldownBody, false);
+    assert.equal(JSON.stringify(regularDuringCooldownBody).includes(awardedBody.claim.code), false);
+
+    const account = await fetch(`${origin}/api/auth/me`, { headers: { Cookie: sessionCookie } });
+    assert.equal(account.status, 200);
+    const accountBody = await account.json();
+    assert.equal(accountBody.progress.rewardClaims[0].campaignId, 'four-games-v1');
+    assert.equal('accountId' in accountBody.progress.rewardClaims[0], false);
+    assert.equal(accountBody.progress.inventory['ticket-free'], 1);
+
+    const secondPhone = '8 999 444-55-77';
+    const secondRegister = await fetch(`${origin}/api/auth/register`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        phone: secondPhone,
+        password: '4321',
+        name: 'Ирина',
+        city: 'Москва',
+        timeZone: 'Europe/Moscow',
+        consent: true,
+        consentVersion: 'account-2026-08-15',
+        deviceId: 'device-four-game-account-0002',
+        progress: {
+          fourGameChallenge: {
+            version: 1,
+            completedGames: ['game2048', 'bubbles', 'pet', 'match3'],
+          },
+        },
+      }),
+    });
+    assert.equal(secondRegister.status, 201);
+    const secondSessionCookie = String(secondRegister.headers.get('set-cookie') || '').split(';')[0];
+    const secondRegistered = await secondRegister.json();
+
+    const secondAccountStatus = await fetch(
+      `${origin}/api/rewards/free-hour?deviceId=${rewardPayload.deviceId}&campaignId=four-games-v1&expectedAccountId=${secondRegistered.account.id}`,
+      { headers: { Cookie: secondSessionCookie } },
+    );
+    assert.equal(secondAccountStatus.status, 200);
+    assert.deepEqual(await secondAccountStatus.json(), { available: true });
+
+    const deviceDuplicate = await fetch(`${origin}/api/rewards/free-hour`, {
+      method: 'POST',
+      headers: { ...headers, Cookie: secondSessionCookie },
+      body: JSON.stringify({
+        ...rewardPayload,
+        expectedAccountId: secondRegistered.account.id,
+        name: 'Ирина',
+        phone: secondPhone,
+      }),
+    });
+    assert.equal(deviceDuplicate.status, 409);
+    const deviceDuplicateBody = await deviceDuplicate.json();
+    assert.equal(deviceDuplicateBody.code, 'CAMPAIGN_ALREADY_CLAIMED');
+    assert.equal('claim' in deviceDuplicateBody, false);
+    assert.equal(JSON.stringify(deviceDuplicateBody).includes(awardedBody.claim.code), false);
+
+    currentTime += 7 * 24 * 60 * 60 * 1000 + 1;
+    const repeated = await fetch(`${origin}/api/rewards/free-hour`, {
+      method: 'POST',
+      headers: { ...headers, Cookie: sessionCookie },
+      body: JSON.stringify({ ...rewardPayload, deviceId: 'device-four-game-claim-0002' }),
+    });
+    assert.equal(repeated.status, 409);
+    const repeatedBody = await repeated.json();
+    assert.equal(repeatedBody.code, 'CAMPAIGN_ALREADY_CLAIMED');
+    assert.equal(repeatedBody.claim.id, awardedBody.claim.id);
+    assert.equal(repeatedBody.claim.campaignId, 'four-games-v1');
+
+    const expiredCampaignStatus = await fetch(
+      `${origin}/api/rewards/free-hour?deviceId=${rewardPayload.deviceId}&campaignId=four-games-v1&expectedAccountId=${registered.account.id}`,
+      { headers: { Cookie: sessionCookie } },
+    );
+    assert.equal(expiredCampaignStatus.status, 200);
+    const expiredCampaignStatusBody = await expiredCampaignStatus.json();
+    assert.equal(expiredCampaignStatusBody.available, false);
+    assert.equal(expiredCampaignStatusBody.claim.status, 'expired');
+    assert.equal(expiredCampaignStatusBody.claim.id, awardedBody.claim.id);
+
+    const claims = (await readFile(claimsDataFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(claims.length, 1);
+    assert.equal(claims[0].price, 0);
+    assert.equal(claims[0].currency, 'promotion');
+    assert.equal(claims[0].campaignId, 'four-games-v1');
+    assert.equal(claims[0].accountId, registered.account.id);
   } finally {
     await service.close();
     await rm(tempRoot, { recursive: true, force: true });
@@ -348,7 +633,7 @@ test('server redemption import is protected, dry-run safe and idempotent', async
     });
     assert.equal(register.status, 201);
     const accountBody = await register.json();
-    assert.equal(accountBody.progress.rewardClaims[0].status, 'redeemed');
+    assert.deepEqual(accountBody.progress.rewardClaims, []);
     assert.equal(accountBody.progress.inventory['ticket-free'], 0);
 
     const exportResponse = await fetch(`${origin}/api/admin/rewards/free-hour/export?date=2026-08-18&city=Москва`, {

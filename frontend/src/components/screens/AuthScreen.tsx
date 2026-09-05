@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Eye, EyeOff, LoaderCircle, LockKeyhole, MapPin, Phone, ShieldCheck, UserRound } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/account/AuthContext';
 import { ACCOUNT_CONSENT_VERSION, AccountApiError } from '@/features/account/accountApi';
 import { getDeviceId } from '@/features/account/device';
 import { useGameContext } from '@/store/GameContext';
+import { GUEST_PROGRESS_OWNER, createDefaultProgress, loadProgressOwner } from '@/store/storage';
 import { cn } from '@/utils/cn';
 
 type AuthMode = 'login' | 'register';
@@ -14,6 +15,10 @@ const PRIVACY_URL = '/legal/privacy';
 const DEFAULT_PASSWORD_MIN_LENGTH = 4;
 const PASSWORD_MAX_LENGTH = 128;
 const CITY_MAX_LENGTH = 40;
+const SAFE_RETURN_PATHS = new Set([
+  '/profile',
+  '/shop/free-hour?campaign=four-games-v1',
+]);
 
 function digitsOnly(value: string) {
   return value.replace(/\D/g, '').slice(0, 11);
@@ -42,8 +47,24 @@ function browserTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
+function getSafeReturnPath(search: string) {
+  const requested = new URLSearchParams(search).get('returnTo');
+  if (!requested?.startsWith('/') || requested.includes('\\')) return '/profile';
+
+  try {
+    const internalOrigin = 'https://termburg.local';
+    const parsed = new URL(requested, internalOrigin);
+    if (parsed.origin !== internalOrigin) return '/profile';
+    const normalized = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return SAFE_RETURN_PATHS.has(normalized) ? normalized : '/profile';
+  } catch {
+    return '/profile';
+  }
+}
+
 export function AuthScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { progress } = useGameContext();
   const { status, session, config, login, register } = useAuth();
   const [mode, setMode] = useState<AuthMode>('login');
@@ -60,10 +81,11 @@ export function AuthScreen() {
 
   const unavailable = config?.available === false;
   const passwordMinLength = config?.passwordMinLength || DEFAULT_PASSWORD_MIN_LENGTH;
+  const returnTo = getSafeReturnPath(location.search);
 
   useEffect(() => {
-    if (status === 'authenticated' && session) navigate('/profile', { replace: true });
-  }, [navigate, session, status]);
+    if (status === 'authenticated' && session) navigate(returnTo, { replace: true });
+  }, [navigate, returnTo, session, status]);
 
   const changeMode = (next: AuthMode) => {
     if (pending || mode === next) return;
@@ -96,8 +118,14 @@ export function AuthScreen() {
     setPending(true);
     setError('');
     try {
+      const canTransferLocalProgress = loadProgressOwner() === GUEST_PROGRESS_OWNER;
       if (mode === 'login') {
-        await login({ identifier, password, deviceId: getDeviceId() });
+        await login({
+          identifier,
+          password,
+          deviceId: getDeviceId(),
+          ...(canTransferLocalProgress ? { fourGameChallenge: progress.fourGameChallenge } : {}),
+        });
       } else {
         await register({
           phone,
@@ -108,10 +136,10 @@ export function AuthScreen() {
           timeZone: browserTimeZone(),
           consent: true,
           consentVersion: ACCOUNT_CONSENT_VERSION,
-          progress,
+          progress: canTransferLocalProgress ? progress : createDefaultProgress(),
         });
       }
-      navigate('/profile', { replace: true });
+      navigate(returnTo, { replace: true });
     } catch (authError) {
       setError(errorMessage(authError));
     } finally {

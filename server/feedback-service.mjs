@@ -16,6 +16,7 @@ const DEFAULT_ENROLLMENT_RATE_WINDOW_MS = 10 * 60 * 1000;
 const REWARD_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const REWARD_PRICE = 50;
 const REWARD_CONSENT_VERSION = 'reward-2026-08-12';
+const FOUR_GAME_CAMPAIGN_ID = 'four-games-v1';
 const CATEGORIES = new Set(['bug', 'idea', 'visual', 'other']);
 const REWARD_CITIES = new Set(['Москва', 'Зеленогорск']);
 const REWARD_CITY_TIMEZONES = {
@@ -125,6 +126,7 @@ function publicClaim(claim, redemption = null, currentTime = Date.now()) {
     expiresAt: claim.expiresAt,
     nextPurchaseAt: claim.nextPurchaseAt,
     status,
+    ...(claim.campaignId === FOUR_GAME_CAMPAIGN_ID ? { campaignId: FOUR_GAME_CAMPAIGN_ID } : {}),
     ...(redemption ? { redeemedAt: redemption.redeemedAt } : {}),
   };
 }
@@ -518,20 +520,47 @@ export function createFeedbackService(options) {
   async function handleRewardRequest(request, response, url) {
     if (request.method === 'GET') {
       const deviceId = text(url.searchParams.get('deviceId'), 80);
-      if (!/^[a-zA-Z0-9-]{16,80}$/.test(deviceId)) {
-        sendJson(response, 400, { error: 'Не удалось определить устройство.' });
+      const requestedCampaignId = url.searchParams.get('campaignId');
+      const hasCampaignId = requestedCampaignId !== null && requestedCampaignId !== '';
+      const campaignId = requestedCampaignId === FOUR_GAME_CAMPAIGN_ID ? FOUR_GAME_CAMPAIGN_ID : '';
+      if (hasCampaignId && !campaignId) {
+        sendJson(response, 400, { error: 'Неизвестная акция.', code: 'UNKNOWN_REWARD_CAMPAIGN' });
         return;
       }
       const currentTime = now();
+      let identity = null;
+      if (campaignId) {
+        const expectedAccountId = text(url.searchParams.get('expectedAccountId'), 80);
+        identity = await accountService.getRewardAccountIdentity(request, expectedAccountId);
+        if (!identity.ok) {
+          sendJson(response, identity.status, { error: identity.error, code: identity.code });
+          return;
+        }
+      } else if (!/^[a-zA-Z0-9-]{16,80}$/.test(deviceId)) {
+        sendJson(response, 400, { error: 'Не удалось определить устройство.' });
+        return;
+      }
       const entries = await loadClaims();
       const redeemedByCode = redemptionMap(await loadRedemptions());
-      const active = [...entries].reverse().find(entry => (
-        entry.rewardId === 'ticket-free'
-        && entry.deviceId === deviceId
-        && entry.nextPurchaseAt > currentTime
-      ));
-      sendJson(response, 200, active
-        ? { available: false, claim: publicClaim(active, redeemedByCode.get(active.code), currentTime), nextPurchaseAt: active.nextPurchaseAt }
+      const claim = campaignId
+        ? [...entries].reverse().find(entry => (
+          entry.rewardId === 'ticket-free'
+          && entry.campaignId === campaignId
+          && identity.matchesClaim(entry)
+        ))
+        : [...entries].reverse().find(entry => (
+          entry.rewardId === 'ticket-free'
+          && entry.deviceId === deviceId
+          && entry.nextPurchaseAt > currentTime
+        ));
+      sendJson(response, 200, claim
+        ? {
+          available: false,
+          ...(!campaignId && claim.campaignId === FOUR_GAME_CAMPAIGN_ID ? {} : {
+            claim: publicClaim(claim, redeemedByCode.get(claim.code), currentTime),
+          }),
+          nextPurchaseAt: claim.nextPurchaseAt,
+        }
         : { available: true });
       return;
     }
@@ -556,6 +585,14 @@ export function createFeedbackService(options) {
     const age = Number(payload.age);
     const city = text(payload.city, 40);
     const deviceId = text(payload.deviceId, 80);
+    const hasCampaignId = payload.campaignId !== undefined && payload.campaignId !== null && payload.campaignId !== '';
+    const campaignId = payload.campaignId === FOUR_GAME_CAMPAIGN_ID ? FOUR_GAME_CAMPAIGN_ID : '';
+    const expectedAccountId = text(payload.expectedAccountId, 80);
+
+    if (hasCampaignId && !campaignId) {
+      sendJson(response, 400, { error: 'Неизвестная акция.', code: 'UNKNOWN_REWARD_CAMPAIGN' });
+      return;
+    }
 
     if (name.length < 2) {
       sendJson(response, 400, { error: 'Укажите имя.', field: 'name' });
@@ -581,20 +618,66 @@ export function createFeedbackService(options) {
       sendJson(response, 400, { error: 'Для выдачи награды нужно отдельное согласие на обработку данных.', field: 'consent' });
       return;
     }
-    if (Number(payload.balance) < REWARD_PRICE) {
+    let rewardIdentity = null;
+    if (campaignId) {
+      rewardIdentity = await accountService.verifyRewardCampaign(request, { campaignId, phone, expectedAccountId });
+      if (!rewardIdentity.ok) {
+        sendJson(response, rewardIdentity.status, {
+          error: rewardIdentity.error,
+          code: rewardIdentity.code,
+          ...(rewardIdentity.field ? { field: rewardIdentity.field } : {}),
+          ...(rewardIdentity.completedGames ? { completedGames: rewardIdentity.completedGames } : {}),
+        });
+        return;
+      }
+    } else if (Number(payload.balance) < REWARD_PRICE) {
       sendJson(response, 400, { error: `Для получения нужно ${REWARD_PRICE} термокоинов.` });
       return;
+    } else {
+      const optionalIdentity = await accountService.getRewardAccountIdentity(request);
+      if (optionalIdentity.ok && optionalIdentity.matchesPhone(phone)) rewardIdentity = optionalIdentity;
     }
 
     const result = await withClaimLock(async () => {
       const currentTime = now();
       const entries = await loadClaims();
+      const campaignDuplicateByAccount = campaignId
+        ? [...entries].reverse().find(entry => (
+          entry.rewardId === 'ticket-free'
+          && entry.campaignId === campaignId
+          && rewardIdentity.matchesClaim(entry)
+        ))
+        : null;
+      if (campaignDuplicateByAccount) {
+        return { duplicate: campaignDuplicateByAccount, duplicateKind: 'campaign' };
+      }
+      const campaignDuplicateByDevice = campaignId
+        ? [...entries].reverse().find(entry => (
+          entry.rewardId === 'ticket-free'
+          && entry.campaignId === campaignId
+          && entry.deviceId === deviceId
+        ))
+        : null;
+      if (campaignDuplicateByDevice) {
+        return {
+          duplicate: campaignDuplicateByDevice,
+          duplicateKind: 'campaign',
+          suppressDuplicateClaim: true,
+        };
+      }
+
       const active = [...entries].reverse().find(entry => (
         entry.rewardId === 'ticket-free'
         && (entry.phone === phone || entry.deviceId === deviceId)
         && entry.nextPurchaseAt > currentTime
       ));
-      if (active) return { duplicate: active };
+      if (active) {
+        return {
+          duplicate: active,
+          duplicateKind: 'cooldown',
+          suppressDuplicateClaim: Boolean(campaignId) || active.campaignId === FOUR_GAME_CAMPAIGN_ID,
+        };
+      }
 
       const entry = {
         id: randomUUID(),
@@ -603,8 +686,10 @@ export function createFeedbackService(options) {
         purchasedAt: currentTime,
         expiresAt: currentTime + REWARD_COOLDOWN_MS,
         nextPurchaseAt: currentTime + REWARD_COOLDOWN_MS,
-        price: REWARD_PRICE,
-        currency: 'termcoins',
+        price: campaignId ? 0 : REWARD_PRICE,
+        currency: campaignId ? 'promotion' : 'termcoins',
+        ...(campaignId ? { campaignId } : {}),
+        ...(rewardIdentity?.accountId ? { accountId: rewardIdentity.accountId } : {}),
         name,
         phone,
         age,
@@ -622,10 +707,15 @@ export function createFeedbackService(options) {
 
     if (result.duplicate) {
       const redeemedByCode = redemptionMap(await loadRedemptions());
+      const campaignDuplicate = result.duplicateKind === 'campaign';
       sendJson(response, 409, {
-        error: 'Бесплатный час уже получен. Следующий будет доступен через неделю.',
-        code: 'REWARD_COOLDOWN',
-        claim: publicClaim(result.duplicate, redeemedByCode.get(result.duplicate.code), now()),
+        error: campaignDuplicate
+          ? 'Награда за четыре игры уже получена.'
+          : 'Бесплатный час уже получен. Следующий будет доступен через неделю.',
+        code: campaignDuplicate ? 'CAMPAIGN_ALREADY_CLAIMED' : 'REWARD_COOLDOWN',
+        ...(!result.suppressDuplicateClaim ? {
+          claim: publicClaim(result.duplicate, redeemedByCode.get(result.duplicate.code), now()),
+        } : {}),
         availableAt: result.duplicate.nextPurchaseAt,
       });
       return;

@@ -24,7 +24,7 @@ import {
 } from '@/engine/engine-pet/petEngine';
 
 export function usePet() {
-  const { progress, updatePet, departPet, awardGameCurrency } = useGameContext();
+  const { progress, updatePet, departPet, awardGameCurrency, recordFourGameCompletion } = useGameContext();
   const pet = progress.pet;
   const petRef = useRef(pet);
   const [cooldowns, setCooldowns] = useState<Record<string, number>>({});
@@ -140,8 +140,10 @@ export function usePet() {
   const doActivity = useCallback((activity: PetActivity): PetInteractionResult | null => {
     const current = getActivePet();
     if (!current) return null;
-    return commit(applyActivity(current, activity));
-  }, [commit, getActivePet]);
+    const result = commit(applyActivity(current, activity));
+    if (result.ok) recordFourGameCompletion('pet');
+    return result;
+  }, [commit, getActivePet, recordFourGameCompletion]);
 
   const takeDailyGift = useCallback((): PetInteractionResult | null => {
     const current = getActivePet();

@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { chromium, webkit } = require('C:/Claude Code/node_modules/playwright');
+const playwrightRoot = [
+  process.env.CODEX_PLAYWRIGHT_PATH,
+  'C:/Users/vasiv/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright',
+  'C:/Claude Code/node_modules/playwright',
+].find(candidate => candidate && existsSync(path.join(candidate, 'package.json')));
+if (!playwrightRoot) throw new Error('Playwright runtime was not found. Set CODEX_PLAYWRIGHT_PATH.');
+const { chromium, webkit } = require(playwrightRoot);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = path.join(projectRoot, 'frontend');
 const externalBaseUrl = process.env.QA_BASE_URL?.replace(/\/$/, '');
@@ -105,28 +112,61 @@ async function mockRewards(page, state) {
   });
 }
 
+async function mockAccount(page) {
+  const account = {
+    id: 'qa-shop-account',
+    name: 'Анна',
+    city: 'Москва',
+    phoneMasked: '+7 999 ***-**-67',
+    login: null,
+    isTest: false,
+    createdAt: Date.now() - 86_400_000,
+    lastLoginAt: Date.now(),
+  };
+  await page.route('**/api/auth/config', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ available: true, method: 'password', passwordMinLength: 4 }),
+  }));
+  await page.route('**/api/auth/me', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ account, progress: baseProgress, revision: 1 }),
+  }));
+  await page.route('**/api/account/progress', async route => {
+    const payload = route.request().postDataJSON();
+    assert.equal(payload.expectedAccountId, account.id);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ progress: payload.progress, revision: 2, savedAt: Date.now() }),
+    });
+  });
+}
+
 async function verify(browser, label, viewport, report, fullFlow = false) {
   const context = await browser.newContext({ viewport, isMobile: viewport.width <= 430, hasTouch: viewport.width <= 430 });
   const page = await context.newPage();
   const state = { claim: null };
   observe(page, label, report);
   await mockRewards(page, state);
+  await mockAccount(page);
   await page.addInitScript(progress => localStorage.setItem('termliny-progress', JSON.stringify(progress)), baseProgress);
   try {
     await page.goto(`${baseUrl}/games`, { waitUntil: 'networkidle' });
     await page.locator('[data-player-status]').waitFor();
-    assert.equal(await page.locator('[data-player-status]').getAttribute('aria-label'), 'Открыть профиль');
+    assert.equal(await page.locator('[data-player-status]').getAttribute('aria-label'), 'Открыть профиль Анна');
     assert.equal(await page.getByText(/Гостевой профиль|этот браузер/).count(), 0);
     await assertNoOverflow(page, `${label}-hub`, report);
     await page.screenshot({ path: path.join(outputRoot, `${label}-hub-profile.png`), fullPage: true });
     await page.reload({ waitUntil: 'networkidle' });
-    assert.equal(await page.locator('[data-player-status]').getAttribute('aria-label'), 'Открыть профиль');
+    assert.equal(await page.locator('[data-player-status]').getAttribute('aria-label'), 'Открыть профиль Анна');
 
     await page.goto(`${baseUrl}/shop?source=moscow_cashier`, { waitUntil: 'networkidle' });
     await page.evaluate(() => document.fonts.ready);
     await page.getByRole('heading', { name: 'Магазин' }).waitFor();
     assert.equal(await page.getByText('Сгорит через 7 дней.').isVisible(), true);
-    assert.equal(await page.getByRole('heading', { name: 'VIP — бесплатный день' }).isVisible(), true);
+    assert.equal(await page.getByRole('heading', { name: 'VIP — бесплатное посещение' }).isVisible(), true);
     assert.equal(await page.getByText('50 термокоинов', { exact: true }).isVisible(), true);
     assert.equal(await page.getByText('Футболка Термлины').count(), 0);
     await assertNoOverflow(page, label, report);
@@ -145,9 +185,9 @@ async function verify(browser, label, viewport, report, fullFlow = false) {
       });
     });
     assert.deepEqual(await merchImage.evaluate(image => ({ width: image.naturalWidth, height: image.naturalHeight })), { width: 960, height: 960 });
-    await page.getByText('600 термокоинов', { exact: true }).waitFor();
+    await page.getByText('6 000 термокоинов', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Купить', exact: true }).click();
-    await page.getByText('Не хватает 420 термокоинов', { exact: true }).waitFor();
+    await page.getByText('Не хватает 5820 термокоинов', { exact: true }).waitFor();
     const failedPurchaseProgress = await page.evaluate(() => JSON.parse(localStorage.getItem('termliny-progress')));
     assert.equal(failedPurchaseProgress.currency, 180);
     assert.equal(failedPurchaseProgress.inventory['merch-hat'] ?? 0, 0);
@@ -171,7 +211,7 @@ async function verify(browser, label, viewport, report, fullFlow = false) {
       await page.getByText('TB-A1B2C3D4', { exact: true }).waitFor();
       const progress = await page.evaluate(() => JSON.parse(localStorage.getItem('termliny-progress')));
       assert.equal(progress.currency, 130);
-      assert.equal(progress.rewardClaims.length, 1);
+      assert.equal(progress.rewardClaims.length, 0, 'reward codes must not be persisted in shared browser storage');
       await Promise.all([
         page.waitForURL('**/profile'),
         page.getByRole('button', { name: 'Открыть профиль' }).click(),
@@ -201,7 +241,7 @@ async function verify(browser, label, viewport, report, fullFlow = false) {
 
     await page.goto(`${baseUrl}/bathhouses/1/schedule`, { waitUntil: 'networkidle' });
     const brandLogo = page.locator('.schedule-mobile__brand img');
-    assert.equal(await brandLogo.getAttribute('src'), '/images/brand/termburg-fish.png');
+    assert.equal(await brandLogo.getAttribute('src'), '/images/brand/termburg-fish-96-v2.webp');
   } finally {
     await context.close();
   }
@@ -213,9 +253,14 @@ let webkitBrowser;
 try {
   await mkdir(outputRoot, { recursive: true });
   await waitForSite();
-  webkitBrowser = await webkit.launch({ headless: true });
-  await verify(webkitBrowser, 'webkit-390x844', { width: 390, height: 844 }, report, true);
-  chromiumBrowser = await chromium.launch({ headless: true });
+  chromiumBrowser = await chromium.launch({ channel: 'chrome', headless: true });
+  if (existsSync(webkit.executablePath())) {
+    webkitBrowser = await webkit.launch({ headless: true });
+    await verify(webkitBrowser, 'webkit-390x844', { width: 390, height: 844 }, report, true);
+  } else {
+    console.warn('WebKit runtime is unavailable; running the mobile purchase flow in Chrome.');
+    await verify(chromiumBrowser, 'chromium-390x844', { width: 390, height: 844 }, report, true);
+  }
   await verify(chromiumBrowser, 'chromium-375x667', { width: 375, height: 667 }, report);
   await verify(chromiumBrowser, 'chromium-1440x900', { width: 1440, height: 900 }, report);
   assert.deepEqual(report.consoleErrors, []);

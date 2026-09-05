@@ -28,7 +28,7 @@ interface Game2048Snapshot {
 }
 
 export function useGame2048() {
-  const { progress, update2048Score, awardGameCurrency } = useGameContext();
+  const { progress, update2048Score, awardGameCurrency, recordFourGameCompletion } = useGameContext();
   const [earnedReward, setEarnedReward] = useState<number | null>(null);
   const [state, setState] = useState<Game2048State>(() => {
     resetTileIdCounter();
@@ -91,6 +91,10 @@ export function useGame2048() {
       update2048Score(state.score);
     }
   }, [state.score, update2048Score]);
+
+  useEffect(() => {
+    if (state.isWon) recordFourGameCompletion('game2048');
+  }, [recordFourGameCompletion, state.isWon]);
 
   // Rewards grow with the difficulty while the total remains equal to the
   // other games' daily limit of 30 termcoins.

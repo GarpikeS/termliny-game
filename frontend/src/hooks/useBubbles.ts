@@ -41,7 +41,13 @@ function randomColor(colors: BubbleColor[]): BubbleColor {
 }
 
 export function useBubbles(fieldWidth: number) {
-  const { progress, completeBubbleLevel, awardGameCurrency, spendLife } = useGameContext();
+  const {
+    progress,
+    completeBubbleLevel,
+    awardGameCurrency,
+    recordFourGameCompletion,
+    spendLife,
+  } = useGameContext();
   const shotBonus = getBubbleShotBonus(progress.selectedCharacter);
 
   const [state, setState] = useState<BubbleGameState>(() => {
@@ -219,6 +225,7 @@ export function useBubbles(fieldWidth: number) {
   useEffect(() => {
     if (state.isWon && currentLevel) {
       completeBubbleLevel(state.level);
+      recordFourGameCompletion('bubbles');
       const awarded = awardGameCurrency('bubbles', currentLevel.reward);
       queueMicrotask(() => setEarnedReward(awarded));
     }

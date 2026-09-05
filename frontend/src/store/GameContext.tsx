@@ -1,21 +1,36 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import type { PlayerProgress, LevelProgress, PetDeparture, PetState, Order, RewardClaim, GameRewardSource } from '@/types/game';
-import { createDefaultProgress, loadProgress, resetProgress, saveProgress } from './storage';
+import {
+  GUEST_PROGRESS_OWNER,
+  accountProgressOwner,
+  createDefaultProgress,
+  loadProgress,
+  loadProgressOwner,
+  resetProgress,
+  saveProgress,
+} from './storage';
 import { buyLifeProgress, spendLifeProgress, syncLifeProgress } from './lives';
 import { awardDailyGameReward } from '@/data/economy';
 import { syncTermlinUnlocks } from '@/data/termliny';
 import { useAuth } from '@/features/account/AuthContext';
+import {
+  addFourGameCompletion,
+  getFourGameChallengeCount,
+  mergeFourGameChallengeProgress,
+  normalizeFourGameChallengeProgress,
+} from '@/features/rewards/fourGameChallenge';
 
 interface GameContextValue {
   progress: PlayerProgress;
   completeLevelAction: (levelId: number, stars: number, score: number, reward: number) => number;
   awardGameCurrency: (source: GameRewardSource, amount: number) => number;
+  recordFourGameCompletion: (source: GameRewardSource) => void;
   spendLife: () => void;
   buyLife: () => void;
   buyWithCoins: (productId: string, price: number) => void;
   consumeInventoryItem: (productId: string) => void;
-  completeRewardClaim: (claim: RewardClaim, price: number) => void;
-  restoreRewardClaim: (claim: RewardClaim) => void;
+  completeRewardClaim: (claim: RewardClaim, price: number, expectedAccountId?: string) => void;
+  restoreRewardClaim: (claim: RewardClaim, expectedAccountId?: string) => void;
   selectCharacter: (id: string) => void;
   setTutorialCompleted: () => void;
   markTutorialSeen: (tutorialId: string) => void;
@@ -36,18 +51,32 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const { status: authStatus, session: authSession, syncProgress: syncAccountProgress } = useAuth();
   const [progress, setProgress] = useState<PlayerProgress>(() => syncTermlinUnlocks(loadProgress()));
   const progressRef = useRef(progress);
+  const storedOwnerRef = useRef(loadProgressOwner());
   const accountIdRef = useRef<string | null>(null);
   const syncTimerRef = useRef<number | null>(null);
   const syncSequenceRef = useRef(0);
   const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const authRef = useRef({ status: authStatus, syncProgress: syncAccountProgress });
+  const authRef = useRef({
+    status: authStatus,
+    accountId: authSession?.account.id ?? null,
+    syncProgress: syncAccountProgress,
+  });
 
   useEffect(() => {
-    authRef.current = { status: authStatus, syncProgress: syncAccountProgress };
-  }, [authStatus, syncAccountProgress]);
+    authRef.current = {
+      status: authStatus,
+      accountId: authSession?.account.id ?? null,
+      syncProgress: syncAccountProgress,
+    };
+  }, [authSession?.account.id, authStatus, syncAccountProgress]);
 
   const scheduleRemoteSync = useCallback((next: PlayerProgress) => {
-    if (authRef.current.status !== 'authenticated') return;
+    const scheduledAccountId = accountIdRef.current;
+    if (
+      authRef.current.status !== 'authenticated'
+      || !scheduledAccountId
+      || authRef.current.accountId !== scheduledAccountId
+    ) return;
     syncSequenceRef.current += 1;
     const sequence = syncSequenceRef.current;
     if (syncTimerRef.current !== null) window.clearTimeout(syncTimerRef.current);
@@ -56,11 +85,26 @@ export function GameProvider({ children }: { children: ReactNode }) {
       syncQueueRef.current = syncQueueRef.current
         .catch(() => undefined)
         .then(async () => {
+          if (
+            sequence !== syncSequenceRef.current
+            || accountIdRef.current !== scheduledAccountId
+            || authRef.current.accountId !== scheduledAccountId
+          ) return;
           const saved = await authRef.current.syncProgress(next);
-          if (sequence !== syncSequenceRef.current) return;
-          const normalized = syncTermlinUnlocks(saved);
+          if (
+            sequence !== syncSequenceRef.current
+            || accountIdRef.current !== scheduledAccountId
+            || authRef.current.accountId !== scheduledAccountId
+          ) return;
+          const normalized = syncTermlinUnlocks({
+            ...saved,
+            fourGameChallenge: mergeFourGameChallengeProgress(
+              saved.fourGameChallenge,
+              next.fourGameChallenge,
+            ),
+          });
           progressRef.current = normalized;
-          saveProgress(normalized);
+          saveProgress(normalized, storedOwnerRef.current);
           setProgress(normalized);
         })
         .catch(() => undefined);
@@ -72,7 +116,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     const next = syncTermlinUnlocks(updater(previous));
     if (next === previous) return previous;
     progressRef.current = next;
-    saveProgress(next);
+    saveProgress(next, storedOwnerRef.current);
     setProgress(next);
     scheduleRemoteSync(next);
     return next;
@@ -83,25 +127,42 @@ export function GameProvider({ children }: { children: ReactNode }) {
       if (syncTimerRef.current !== null) window.clearTimeout(syncTimerRef.current);
       syncTimerRef.current = null;
       syncSequenceRef.current += 1;
-      const hydrated = syncTermlinUnlocks(authSession.progress);
+      const serverChallenge = normalizeFourGameChallengeProgress(authSession.progress.fourGameChallenge);
+      const nextOwner = accountProgressOwner(authSession.account.id);
+      const canMergeCachedChallenge = storedOwnerRef.current === GUEST_PROGRESS_OWNER
+        || storedOwnerRef.current === nextOwner;
+      const mergedChallenge = canMergeCachedChallenge
+        ? mergeFourGameChallengeProgress(serverChallenge, progressRef.current.fourGameChallenge)
+        : serverChallenge;
+      const hydrated = syncTermlinUnlocks({
+        ...authSession.progress,
+        fourGameChallenge: mergedChallenge,
+      });
+      const shouldSyncGuestChallenge = getFourGameChallengeCount(mergedChallenge)
+        > getFourGameChallengeCount(serverChallenge);
       accountIdRef.current = authSession.account.id;
+      storedOwnerRef.current = nextOwner;
       progressRef.current = hydrated;
-      saveProgress(hydrated);
+      saveProgress(hydrated, nextOwner);
       setProgress(hydrated);
+      if (shouldSyncGuestChallenge) scheduleRemoteSync(hydrated);
       return;
     }
 
-    if (authStatus === 'guest' && accountIdRef.current) {
+    if (authStatus === 'guest' && (
+      accountIdRef.current !== null || storedOwnerRef.current !== GUEST_PROGRESS_OWNER
+    )) {
       if (syncTimerRef.current !== null) window.clearTimeout(syncTimerRef.current);
       syncTimerRef.current = null;
       syncSequenceRef.current += 1;
       const fresh = syncTermlinUnlocks(createDefaultProgress());
       accountIdRef.current = null;
+      storedOwnerRef.current = GUEST_PROGRESS_OWNER;
       progressRef.current = fresh;
       resetProgress();
       setProgress(fresh);
     }
-  }, [authSession, authStatus]);
+  }, [authSession, authStatus, scheduleRemoteSync]);
 
   useEffect(() => () => {
     if (syncTimerRef.current !== null) window.clearTimeout(syncTimerRef.current);
@@ -129,6 +190,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         currentLevel: Math.max(prev.currentLevel, levelId + 1),
         currency: prev.currency + earnedReward,
         dailyGameRewards: dailyReward.rewards,
+        fourGameChallenge: addFourGameCompletion(prev.fourGameChallenge, 'match3'),
         levels: {
           ...prev.levels,
           [levelId]: { stars: newStars, bestScore: newBest, completed: true },
@@ -151,6 +213,17 @@ export function GameProvider({ children }: { children: ReactNode }) {
       };
     });
     return earnedReward;
+  }, [update]);
+
+  const recordFourGameCompletion = useCallback((source: GameRewardSource) => {
+    update(prev => {
+      const current = normalizeFourGameChallengeProgress(prev.fourGameChallenge);
+      if (current.completedGames.includes(source)) return prev;
+      return {
+        ...prev,
+        fourGameChallenge: addFourGameCompletion(current, source),
+      };
+    });
   }, [update]);
 
   const spendLife = useCallback(() => {
@@ -189,7 +262,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
     });
   }, [update]);
 
-  const completeRewardClaim = useCallback((claim: RewardClaim, price: number) => {
+  const completeRewardClaim = useCallback((claim: RewardClaim, price: number, expectedAccountId?: string) => {
+    if (expectedAccountId && (
+      accountIdRef.current !== expectedAccountId
+      || authRef.current.status !== 'authenticated'
+      || authRef.current.accountId !== expectedAccountId
+    )) return;
     update(prev => {
       if (price < 0 || prev.currency < price || prev.rewardClaims.some(item => item.id === claim.id)) {
         return prev;
@@ -203,7 +281,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
     });
   }, [update]);
 
-  const restoreRewardClaim = useCallback((claim: RewardClaim) => {
+  const restoreRewardClaim = useCallback((claim: RewardClaim, expectedAccountId?: string) => {
+    if (expectedAccountId && (
+      accountIdRef.current !== expectedAccountId
+      || authRef.current.status !== 'authenticated'
+      || authRef.current.accountId !== expectedAccountId
+    )) return;
     update(prev => {
       const rewardClaims = prev.rewardClaims.some(item => item.id === claim.id)
         ? prev.rewardClaims.map(item => item.id === claim.id ? claim : item)
@@ -326,6 +409,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       progress,
       completeLevelAction,
       awardGameCurrency,
+      recordFourGameCompletion,
       spendLife,
       buyLife,
       buyWithCoins,

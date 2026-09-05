@@ -139,6 +139,7 @@ export interface Order {
 export interface RewardClaim {
   id: string;
   rewardId: 'ticket-free';
+  campaignId?: 'four-games-v1';
   code: string;
   purchasedAt: number;
   expiresAt: number;
@@ -193,6 +194,11 @@ export interface PetDiaryEntry {
 
 export type GameRewardSource = 'match3' | 'game2048' | 'bubbles' | 'pet';
 
+export interface FourGameChallengeProgress {
+  version: 1;
+  completedGames: GameRewardSource[];
+}
+
 export interface DailyGameRewards {
   date: string;
   earned: Record<GameRewardSource, number>;
@@ -203,6 +209,7 @@ export interface PlayerProgress {
   levels: Record<number, LevelProgress>;
   currency: number;
   dailyGameRewards: DailyGameRewards;
+  fourGameChallenge: FourGameChallengeProgress;
   lives: number;
   nextLifeAt: number | null;
   selectedCharacter: string;

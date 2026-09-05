@@ -1,4 +1,4 @@
-import type { PlayerProgress } from '@/types/game';
+import type { FourGameChallengeProgress, PlayerProgress } from '@/types/game';
 
 export const ACCOUNT_CONSENT_VERSION = 'account-2026-08-15';
 
@@ -29,6 +29,7 @@ export interface LoginPayload {
   identifier: string;
   password: string;
   deviceId: string;
+  fourGameChallenge?: FourGameChallengeProgress;
 }
 
 export interface RegisterPayload {
@@ -126,7 +127,11 @@ export async function logoutAccount(signal?: AbortSignal): Promise<void> {
   await api<{ ok: true }>('/api/auth/logout', { method: 'POST', signal });
 }
 
-export function saveAccountProgress(progress: PlayerProgress, signal?: AbortSignal): Promise<{
+export function saveAccountProgress(
+  progress: PlayerProgress,
+  expectedAccountId: string,
+  signal?: AbortSignal,
+): Promise<{
   progress: PlayerProgress;
   revision: number;
   savedAt: number;
@@ -134,7 +139,7 @@ export function saveAccountProgress(progress: PlayerProgress, signal?: AbortSign
   return api('/api/account/progress', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ progress }),
+    body: JSON.stringify({ progress, expectedAccountId }),
     signal,
   });
 }
