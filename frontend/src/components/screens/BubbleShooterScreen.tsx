@@ -22,6 +22,7 @@ const FIELD_SIDE_GUTTER = 32;
 const FIELD_INNER_PADDING = 8;
 const FIELD_BORDER_ALLOWANCE = 2;
 const MIN_FIELD_WIDTH = GRID_COLS * BUBBLE_DIAMETER + FIELD_INNER_PADDING * 2 + FIELD_BORDER_ALLOWANCE;
+const SHOOTER_HIT_RADIUS = 34;
 const AIM_TUTORIAL_ID = 'bubbles-aim';
 const MATCH_TUTORIAL_ID = 'bubbles-match';
 type BubbleCoachStep = 'aim' | 'match' | null;
@@ -123,6 +124,8 @@ export function BubbleShooterScreen() {
   const fieldRef = useRef<HTMLDivElement>(null);
   const [fieldScale, setFieldScale] = useState(1);
   const dragging = useRef(false);
+  const activePointerId = useRef<number | null>(null);
+  const aimAngleRef = useRef(aimAngle);
   const [isAiming, setIsAiming] = useState(false);
   const previousScore = useRef(state.score);
   const [abilityUsed, setAbilityUsed] = useState(false);
@@ -133,17 +136,28 @@ export function BubbleShooterScreen() {
     return null;
   });
 
+  const cancelAim = useCallback(() => {
+    const pointerId = activePointerId.current;
+    activePointerId.current = null;
+    dragging.current = false;
+    setIsAiming(false);
+    if (pointerId !== null && fieldRef.current?.hasPointerCapture(pointerId)) {
+      fieldRef.current.releasePointerCapture(pointerId);
+    }
+  }, []);
+
   useEffect(() => {
     const updateFieldWidth = () => {
       const nextWidth = getResponsiveFieldWidth();
       if (nextWidth === fieldWidthRef.current) return;
+      cancelAim();
       fieldWidthRef.current = nextWidth;
       resizeField(nextWidth);
       setFieldWidth(nextWidth);
     };
     window.addEventListener('resize', updateFieldWidth);
     return () => window.removeEventListener('resize', updateFieldWidth);
-  }, [resizeField]);
+  }, [cancelAim, resizeField]);
 
   useLayoutEffect(() => {
     const area = fieldAreaRef.current;
@@ -185,7 +199,7 @@ export function BubbleShooterScreen() {
     ? {
         id: AIM_TUTORIAL_ID,
         title: 'Наведи бросок',
-        message: 'Потяни прицел к нужному месту и отпусти — веник полетит по линии.',
+        message: 'Коснись нужного места или потяни прицел и отпусти — веник полетит по линии.',
         icon: <Target size={21} />,
       }
     : coachStep === 'match'
@@ -226,46 +240,71 @@ export function BubbleShooterScreen() {
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
+    if (
+      activePointerId.current !== null
+      || flying
+      || state.isWon
+      || state.isLost
+      || (e.pointerType === 'mouse' && e.button !== 0)
+    ) return;
     const point = getLogicalPointer(e.clientX, e.clientY);
     if (!point) return;
     const { x, y } = point;
-    const shooterHitRadius = 34;
-    if (Math.hypot(x - shooterX, y - shooterY) > shooterHitRadius || flying || state.isWon || state.isLost) return;
+    const startsOnShooter = Math.hypot(x - shooterX, y - shooterY) <= SHOOTER_HIT_RADIUS;
+    if (!startsOnShooter && y >= shooterY - SHOOTER_HIT_RADIUS) return;
 
     e.currentTarget.setPointerCapture(e.pointerId);
+    activePointerId.current = e.pointerId;
     dragging.current = true;
     setIsAiming(true);
     const angle = Math.atan2(x - shooterX, shooterY - y);
-    setAimAngle(Math.max(-1.2, Math.min(1.2, angle)));
+    const nextAngle = Math.max(-1.2, Math.min(1.2, angle));
+    aimAngleRef.current = nextAngle;
+    setAimAngle(nextAngle);
   }, [flying, getLogicalPointer, shooterX, shooterY, setAimAngle, state.isLost, state.isWon]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (!dragging.current) return;
+    if (!dragging.current || activePointerId.current !== e.pointerId) return;
     const point = getLogicalPointer(e.clientX, e.clientY);
     if (!point) return;
     const { x, y } = point;
     const angle = Math.atan2(x - shooterX, shooterY - y);
-    setAimAngle(Math.max(-1.2, Math.min(1.2, angle)));
+    const nextAngle = Math.max(-1.2, Math.min(1.2, angle));
+    aimAngleRef.current = nextAngle;
+    setAimAngle(nextAngle);
   }, [getLogicalPointer, shooterX, shooterY, setAimAngle]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
-    if (dragging.current) {
-      dragging.current = false;
-      setIsAiming(false);
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-      shoot(aimAngle);
+    if (dragging.current && activePointerId.current === e.pointerId) {
+      // Some WebKit touch releases expose (0, 0); keep the last reliable
+      // down/move direction in that case instead of redirecting the shot.
+      const point = e.clientX !== 0 || e.clientY !== 0
+        ? getLogicalPointer(e.clientX, e.clientY)
+        : null;
+      if (point) {
+        const angle = Math.atan2(point.x - shooterX, shooterY - point.y);
+        aimAngleRef.current = Math.max(-1.2, Math.min(1.2, angle));
+      }
+      const shotAngle = aimAngleRef.current;
+      cancelAim();
+      shoot(shotAngle);
       triggerHaptic('selection');
       if (coachStep === 'aim') {
         markTutorialSeen(AIM_TUTORIAL_ID);
         setCoachStep('match');
       }
     }
-  }, [aimAngle, coachStep, markTutorialSeen, shoot]);
+  }, [cancelAim, coachStep, getLogicalPointer, markTutorialSeen, shoot, shooterX, shooterY]);
 
-  const handlePointerCancel = useCallback(() => {
-    dragging.current = false;
-    setIsAiming(false);
-  }, []);
+  const handlePointerCancel = useCallback((e: React.PointerEvent) => {
+    if (activePointerId.current !== e.pointerId) return;
+    cancelAim();
+  }, [cancelAim]);
+
+  const handleLostPointerCapture = useCallback((e: React.PointerEvent) => {
+    if (activePointerId.current !== e.pointerId) return;
+    cancelAim();
+  }, [cancelAim]);
 
   const suppressNativeFieldInteraction = useCallback((e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -279,16 +318,18 @@ export function BubbleShooterScreen() {
   }, [abilityUsed]);
 
   const handleRestart = useCallback(() => {
+    cancelAim();
     setShowTrajectory(false);
     setAbilityUsed(false);
     restart();
-  }, [restart]);
+  }, [cancelAim, restart]);
 
   const handleNextLevel = useCallback(() => {
+    cancelAim();
     setShowTrajectory(false);
     setAbilityUsed(false);
     nextLevel();
-  }, [nextLevel]);
+  }, [cancelAim, nextLevel]);
 
   const hasActiveAbility = !abilityUsed && (
     progress.selectedCharacter === 'kazimir' ||
@@ -400,6 +441,7 @@ export function BubbleShooterScreen() {
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerCancel}
+            onLostPointerCapture={handleLostPointerCapture}
             onContextMenu={suppressNativeFieldInteraction}
             onDragStart={suppressNativeFieldInteraction}
           >

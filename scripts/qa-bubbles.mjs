@@ -196,6 +196,57 @@ async function runInteractive(browser, report) {
     const restartedPattern = await field.locator('.venik-bubble > div:first-child').evaluateAll(nodes => nodes.map(node => node.getAttribute('style')));
     assert.deepEqual(restartedPattern, initialPattern);
 
+    await page.evaluate(() => {
+      const bubbleField = document.querySelector('.bubble-field-surface');
+      if (!bubbleField) throw new Error('Игровое поле не найдено');
+      window.__qaBubblePointerId = null;
+      bubbleField.addEventListener('pointerdown', event => {
+        window.__qaBubblePointerId = event.pointerId;
+      }, { capture: true, once: true });
+    });
+    await page.mouse.move(box.x + box.width * 0.72, box.y + box.height * 0.30);
+    await page.mouse.down();
+    await page.waitForFunction(() => window.__qaBubblePointerId !== null);
+    await page.evaluate(() => {
+      const bubbleField = document.querySelector('.bubble-field-surface');
+      if (!(bubbleField instanceof HTMLElement) || window.__qaBubblePointerId === null) {
+        throw new Error('Захваченный указатель не найден');
+      }
+      bubbleField.dispatchEvent(new PointerEvent('lostpointercapture', {
+        bubbles: true,
+        pointerId: window.__qaBubblePointerId,
+        pointerType: 'mouse',
+      }));
+    });
+    await page.waitForFunction(() => document.querySelector('[data-bubble-shooter]')?.getAttribute('data-aiming') === 'false');
+    await page.mouse.up();
+    assert.equal(await getShots(page), 29, 'потеря захвата указателя должна отменять бросок');
+
+    await page.mouse.move(box.x + box.width * 0.72, box.y + box.height * 0.30);
+    await page.mouse.down();
+    await page.waitForFunction(() => document.querySelector('[data-bubble-shooter]')?.getAttribute('data-aiming') === 'true');
+    const directAimPoints = await field.locator('.bubble-aim-line polyline').getAttribute('points');
+    assert.ok(directAimPoints);
+    const [aimStart, aimNext] = directAimPoints.split(' ').slice(0, 2).map(point => point.split(',').map(Number));
+    assert.ok(aimNext[0] > aimStart[0], 'нажатие справа на игровом поле должно направлять прицел вправо');
+    await page.getByRole('button', { name: 'Начать заново' }).evaluate(button => button.click());
+    await page.mouse.up();
+    await page.waitForTimeout(50);
+    assert.equal(await getShots(page), 29, 'перезапуск во время наведения не должен выпускать шар после отпускания');
+
+    await page.touchscreen.tap(box.x + box.width * 0.72, box.y + box.height * 0.30);
+    await page.waitForFunction(() => Number(document.querySelector('[data-bubbles-shots]')?.textContent) === 28);
+    await page.touchscreen.tap(box.x + box.width * 0.28, box.y + box.height * 0.30);
+    await page.waitForTimeout(50);
+    assert.equal(await getShots(page), 28, 'повторный тап во время полёта не должен тратить второй бросок');
+    await waitForShotToLand(page);
+    const tappedAttachedCount = await field.locator('.venik-bubble').count();
+    assert.notEqual(tappedAttachedCount, 33, 'тап по полю должен направить и запустить шар без протягивания от пусковой точки');
+
+    await page.getByRole('button', { name: 'Начать заново' }).click();
+    await page.waitForTimeout(300);
+    assert.equal(await getShots(page), 29);
+
     await page.mouse.move(box.x + box.width / 2, box.y + box.height - 54);
     await page.mouse.down();
     await page.mouse.move(box.x + box.width * 0.97, box.y + box.height * 0.18, { steps: 5 });
@@ -225,6 +276,7 @@ async function runTutorialVisibility(browser, report) {
   try {
     await page.goto(`${baseUrl}/games/bubbles`, { waitUntil: 'networkidle' });
     await page.getByText('Наведи бросок', { exact: true }).waitFor();
+    await page.getByText('Коснись нужного места или потяни прицел и отпусти — веник полетит по линии.', { exact: true }).waitFor();
     const geometry = await page.evaluate(() => {
       const field = document.querySelector('.bubble-field-surface');
       const fieldArea = document.querySelector('.bubble-field-area');
@@ -259,6 +311,13 @@ async function runTutorialVisibility(browser, report) {
     assert.ok(geometry.shooterBottom <= geometry.abilityTop + 1, `панель перекрывает шар: ${JSON.stringify(geometry)}`);
     assert.equal(geometry.shooterVisibleAtCenter, true);
     assert.equal(geometry.coachVisibleAtCenter, true, `карточка обучения должна находиться поверх игрового поля: ${JSON.stringify(geometry)}`);
+    const tutorialFieldBox = await page.locator('.bubble-field-surface').boundingBox();
+    assert.ok(tutorialFieldBox);
+    await page.touchscreen.tap(
+      tutorialFieldBox.x + tutorialFieldBox.width * 0.72,
+      tutorialFieldBox.y + tutorialFieldBox.height * 0.30,
+    );
+    await page.getByText('Собери три', { exact: true }).waitFor();
     report.layouts.push({ breakpoint: 'webkit-390x600-tutorial', ...geometry });
   } finally {
     await context.close();

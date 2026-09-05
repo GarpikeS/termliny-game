@@ -84,6 +84,7 @@ export function useBubbles(fieldWidth: number) {
   const burstClearRef = useRef<number>(0);
   const burstQueueRef = useRef<BubbleBurst[]>([]);
   const roundRef = useRef(0);
+  const flightActiveRef = useRef(false);
   const lifeSpentForLoss = useRef(false);
   const trajectoryRef = useRef<{ x: number; y: number }[]>([]);
   const trajectoryIdx = useRef(0);
@@ -96,6 +97,7 @@ export function useBubbles(fieldWidth: number) {
     window.cancelAnimationFrame(animRef.current);
     window.clearTimeout(trailClearRef.current);
     window.clearTimeout(burstClearRef.current);
+    flightActiveRef.current = false;
     setFlying(null);
     setFlightTrail([]);
     setBursts([]);
@@ -109,7 +111,7 @@ export function useBubbles(fieldWidth: number) {
   }, []);
 
   const shoot = useCallback((angle: number) => {
-    if (flying || state.isWon || state.isLost) return;
+    if (flightActiveRef.current || flying || state.isWon || state.isLost) return;
 
     const startX = fieldWidth / 2;
     const fieldHeight = fieldWidth * 1.4;
@@ -121,6 +123,7 @@ export function useBubbles(fieldWidth: number) {
     window.clearTimeout(trailClearRef.current);
     setFlightTrail([]);
 
+    flightActiveRef.current = true;
     setFlying({ x: startX, y: startY, color: state.shooterColor });
 
     setState(prev => ({
@@ -172,6 +175,7 @@ export function useBubbles(fieldWidth: number) {
       if (round !== roundRef.current) return;
       const attachment = findAttachmentCell(point.x, point.y, fieldWidth, state.bubbles, hit ?? undefined);
       if (attachment) placeBubble(attachment.row, attachment.col, attachment.x, attachment.y, flyingColor);
+      flightActiveRef.current = false;
       setFlying(null);
       trailClearRef.current = window.setTimeout(() => setFlightTrail([]), 140);
     };
@@ -248,6 +252,7 @@ export function useBubbles(fieldWidth: number) {
     const next = getBubbleLevel(state.level + 1);
     if (!next) return;
     roundRef.current += 1;
+    flightActiveRef.current = false;
     lifeSpentForLoss.current = false;
     setFlying(null);
     setFlightTrail([]);
@@ -261,6 +266,7 @@ export function useBubbles(fieldWidth: number) {
   const restart = useCallback(() => {
     const level = getBubbleLevel(state.level) ?? getBubbleLevel(1)!;
     roundRef.current += 1;
+    flightActiveRef.current = false;
     lifeSpentForLoss.current = false;
     setFlying(null);
     setFlightTrail([]);
