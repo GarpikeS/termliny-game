@@ -1,4 +1,4 @@
-export const GAME_LEVEL_TOTAL = 100;
+export const GAME_LEVEL_TOTAL = 50;
 
 export const SLAVICH_LEVEL_BASE_SCORE = 64;
 export const SLAVICH_LEVEL_SCORE_STEP = 64;

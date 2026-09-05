@@ -4,8 +4,8 @@ import { normalizePetState } from '@/engine/engine-pet/petEngine';
 import { createDailyGameRewards, normalizeDailyGameRewards } from '@/data/economy';
 import {
   FOUR_GAME_CHALLENGE_ID,
+  backfillFourGameChallengeProgress,
   createFourGameChallengeProgress,
-  normalizeFourGameChallengeProgress,
 } from '@/features/rewards/fourGameChallenge';
 import { GAME_LEVEL_TOTAL } from '@/data/gameProgression';
 
@@ -62,6 +62,56 @@ export function createDefaultProgress(): PlayerProgress {
   };
 }
 
+interface NormalizeProgressOptions {
+  preserveDailyGameRewards?: boolean;
+  preserveRewardClaims?: boolean;
+}
+
+export function normalizeProgress(
+  value: unknown,
+  { preserveDailyGameRewards = false, preserveRewardClaims = false }: NormalizeProgressOptions = {},
+): PlayerProgress {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const parsed = { ...DEFAULT_PROGRESS, ...source } as PlayerProgress;
+  parsed.currentLevel = Math.max(1, Math.min(GAME_LEVEL_TOTAL + 1, Math.floor(Number(parsed.currentLevel) || 1)));
+  parsed.game2048LevelsCompleted = Math.max(0, Math.min(GAME_LEVEL_TOTAL, Math.floor(Number(parsed.game2048LevelsCompleted) || 0)));
+  parsed.bubbleLevelsCompleted = Math.max(0, Math.min(GAME_LEVEL_TOTAL, Math.floor(Number(parsed.bubbleLevelsCompleted) || 0)));
+  const storedLevels = parsed.levels && typeof parsed.levels === 'object' && !Array.isArray(parsed.levels)
+    ? parsed.levels
+    : {};
+  parsed.levels = Object.fromEntries(
+    Object.entries(storedLevels).filter(([id]) => {
+      const numericId = Number(id);
+      return Number.isInteger(numericId) && numericId >= 1 && numericId <= GAME_LEVEL_TOTAL;
+    }),
+  );
+  if (!Array.isArray(parsed.tutorialFlags)) parsed.tutorialFlags = [];
+  if (!preserveRewardClaims || !Array.isArray(parsed.rewardClaims)) parsed.rewardClaims = [];
+  if (
+    !parsed.petDeparture
+    || typeof parsed.petDeparture.name !== 'string'
+    || typeof parsed.petDeparture.characterId !== 'string'
+    || !['hunger', 'happiness', 'energy', 'cleanliness'].includes(parsed.petDeparture.depletedStat)
+  ) {
+    parsed.petDeparture = null;
+  } else {
+    parsed.petDeparture = {
+      ...parsed.petDeparture,
+      experience: Number.isFinite(parsed.petDeparture.experience)
+        ? Math.max(0, Math.floor(parsed.petDeparture.experience ?? 0))
+        : 0,
+    };
+  }
+  if (parsed.pet) parsed.pet = normalizePetState(parsed.pet);
+  if (!preserveDailyGameRewards) {
+    parsed.dailyGameRewards = normalizeDailyGameRewards(parsed.dailyGameRewards);
+  }
+  parsed.fourGameChallenge = backfillFourGameChallengeProgress(parsed.fourGameChallenge, parsed);
+  return syncLifeProgress(parsed);
+}
+
 export function loadProgress(): PlayerProgress {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -75,43 +125,7 @@ export function loadProgress(): PlayerProgress {
     ));
     const owner = normalizeProgressOwner(localStorage.getItem(STORAGE_OWNER_KEY))
       ?? (hadAccountCampaignClaim ? UNKNOWN_ACCOUNT_PROGRESS_OWNER : GUEST_PROGRESS_OWNER);
-    const parsed = { ...DEFAULT_PROGRESS, ...storedValue } as PlayerProgress;
-    parsed.currentLevel = Math.max(1, Math.min(GAME_LEVEL_TOTAL + 1, Math.floor(Number(parsed.currentLevel) || 1)));
-    parsed.game2048LevelsCompleted = Math.max(0, Math.min(GAME_LEVEL_TOTAL, Math.floor(Number(parsed.game2048LevelsCompleted) || 0)));
-    parsed.bubbleLevelsCompleted = Math.max(0, Math.min(GAME_LEVEL_TOTAL, Math.floor(Number(parsed.bubbleLevelsCompleted) || 0)));
-    const storedLevels = parsed.levels && typeof parsed.levels === 'object' && !Array.isArray(parsed.levels)
-      ? parsed.levels
-      : {};
-    parsed.levels = Object.fromEntries(
-      Object.entries(storedLevels).filter(([id]) => {
-        const numericId = Number(id);
-        return Number.isInteger(numericId) && numericId >= 1 && numericId <= GAME_LEVEL_TOTAL;
-      }),
-    );
-    if (!Array.isArray(parsed.tutorialFlags)) {
-      parsed.tutorialFlags = [];
-    }
-    // Reward codes are restored from the server and never kept in shared browser storage.
-    parsed.rewardClaims = [];
-    if (
-      !parsed.petDeparture
-      || typeof parsed.petDeparture.name !== 'string'
-      || typeof parsed.petDeparture.characterId !== 'string'
-      || !['hunger', 'happiness', 'energy', 'cleanliness'].includes(parsed.petDeparture.depletedStat)
-    ) {
-      parsed.petDeparture = null;
-    } else {
-      parsed.petDeparture = {
-        ...parsed.petDeparture,
-        experience: Number.isFinite(parsed.petDeparture.experience)
-          ? Math.max(0, Math.floor(parsed.petDeparture.experience ?? 0))
-          : 0,
-      };
-    }
-    if (parsed.pet) parsed.pet = normalizePetState(parsed.pet);
-    parsed.dailyGameRewards = normalizeDailyGameRewards(parsed.dailyGameRewards);
-    parsed.fourGameChallenge = normalizeFourGameChallengeProgress(parsed.fourGameChallenge);
-    const normalized = syncLifeProgress(parsed);
+    const normalized = normalizeProgress(storedValue);
     saveProgress(normalized, owner);
     return normalized;
   } catch {

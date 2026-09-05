@@ -92,7 +92,7 @@ async function seedAndOpen(page) {
   await page.goto(`${baseUrl}/games/bubbles`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
   await page.getByRole('heading', { name: 'Бирюльки', exact: true }).waitFor();
-  await page.getByText('1 из 100', { exact: true }).waitFor();
+  await page.getByText('1 из 50', { exact: true }).waitFor();
   await page.waitForTimeout(500);
 }
 

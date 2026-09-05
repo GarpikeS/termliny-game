@@ -11,6 +11,15 @@ export const FOUR_GAME_CHALLENGE_SOURCES = [
 
 const FOUR_GAME_CHALLENGE_SOURCE_SET = new Set<string>(FOUR_GAME_CHALLENGE_SOURCES);
 
+interface FourGameCompletionEvidence {
+  currentLevel?: unknown;
+  levels?: unknown;
+  game2048LevelsCompleted?: unknown;
+  bubbleLevelsCompleted?: unknown;
+  pet?: unknown;
+  petDeparture?: unknown;
+}
+
 function isGameRewardSource(value: unknown): value is GameRewardSource {
   return typeof value === 'string' && FOUR_GAME_CHALLENGE_SOURCE_SET.has(value);
 }
@@ -61,6 +70,41 @@ export function addFourGameCompletion(
     version: 1,
     completedGames: [source],
   });
+}
+
+function hasCompletedMatch3Level(evidence: FourGameCompletionEvidence): boolean {
+  const currentLevel = Number(evidence.currentLevel);
+  if (Number.isFinite(currentLevel) && currentLevel > 1) return true;
+  if (!evidence.levels || typeof evidence.levels !== 'object' || Array.isArray(evidence.levels)) return false;
+  return Object.values(evidence.levels).some(level => (
+    Boolean(level)
+    && typeof level === 'object'
+    && (level as { completed?: unknown }).completed === true
+  ));
+}
+
+function hasCompletedPetLevel(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const experience = Number((value as { experience?: unknown }).experience);
+  return Number.isFinite(experience) && experience >= 100;
+}
+
+export function backfillFourGameChallengeProgress(
+  value: unknown,
+  evidence: FourGameCompletionEvidence,
+): FourGameChallengeProgress {
+  let progress = normalizeFourGameChallengeProgress(value);
+  const completed2048 = Number(evidence.game2048LevelsCompleted);
+  const completedBubbles = Number(evidence.bubbleLevelsCompleted);
+
+  if (Number.isFinite(completed2048) && completed2048 > 0) progress = addFourGameCompletion(progress, 'game2048');
+  if (Number.isFinite(completedBubbles) && completedBubbles > 0) progress = addFourGameCompletion(progress, 'bubbles');
+  if (hasCompletedMatch3Level(evidence)) progress = addFourGameCompletion(progress, 'match3');
+  if (hasCompletedPetLevel(evidence.pet) || hasCompletedPetLevel(evidence.petDeparture)) {
+    progress = addFourGameCompletion(progress, 'pet');
+  }
+
+  return progress;
 }
 
 export function getFourGameChallengeCount(progress: unknown): number {

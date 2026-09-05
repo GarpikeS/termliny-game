@@ -175,7 +175,7 @@ async function verifyBubbles(browser, report) {
     await seed(page);
     await page.goto(`${baseUrl}/games/bubbles`, { waitUntil: 'networkidle' });
     await page.getByRole('heading', { name: 'Бирюльки', exact: true }).waitFor();
-    await page.getByText('1 из 100', { exact: true }).waitFor();
+    await page.getByText('1 из 50', { exact: true }).waitFor();
     await page.getByLabel('Жизни: 4 из 5').waitFor();
     assert.equal(await page.locator('[data-bubbles-shots]').textContent(), '29');
     const layout = await page.evaluate(() => ({ viewport: innerWidth, document: document.documentElement.scrollWidth }));

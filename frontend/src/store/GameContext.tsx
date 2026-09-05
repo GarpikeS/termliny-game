@@ -6,6 +6,7 @@ import {
   createDefaultProgress,
   loadProgress,
   loadProgressOwner,
+  normalizeProgress,
   resetProgress,
   saveProgress,
 } from './storage';
@@ -20,7 +21,6 @@ import {
   normalizeFourGameChallengeProgress,
 } from '@/features/rewards/fourGameChallenge';
 import { GAME_LEVEL_TOTAL } from '@/data/gameProgression';
-import { normalizePetState } from '@/engine/engine-pet/petEngine';
 
 interface GameContextValue {
   progress: PlayerProgress;
@@ -52,9 +52,10 @@ const GameContext = createContext<GameContextValue | null>(null);
 const UNAVAILABLE_PROGRESS_VIEWER = 'auth:unavailable';
 
 function normalizeRuntimeProgress(progress: PlayerProgress): PlayerProgress {
-  return progress.pet
-    ? { ...progress, pet: normalizePetState(progress.pet) }
-    : progress;
+  return normalizeProgress(progress, {
+    preserveDailyGameRewards: true,
+    preserveRewardClaims: true,
+  });
 }
 
 export function GameProvider({ children }: { children: ReactNode }) {
@@ -150,7 +151,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
           ...authSession.progress,
           fourGameChallenge: mergedChallenge,
         }));
-        const shouldSyncGuestChallenge = getFourGameChallengeCount(mergedChallenge)
+        const shouldSyncGuestChallenge = getFourGameChallengeCount(hydrated.fourGameChallenge)
           > getFourGameChallengeCount(serverChallenge);
         accountIdRef.current = authSession.account.id;
         storedOwnerRef.current = nextOwner;

@@ -92,7 +92,7 @@ function generateLevel(id: number): BubbleLevel {
   return { id, name, rows, colors, shots, reward, pattern, seed: Math.imul(id, 2654435761) >>> 0 };
 }
 
-// Общая для всех игр шкала из 100 реально генерируемых уровней.
+// Общая для всех игр шкала из 50 реально генерируемых уровней.
 const levels: BubbleLevel[] = Array.from({ length: GAME_LEVEL_TOTAL }, (_, i) => generateLevel(i + 1));
 
 export function getBubbleLevel(id: number): BubbleLevel | undefined {

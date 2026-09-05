@@ -197,7 +197,10 @@ test('phone/password registration, session, progress sync, logout and cross-devi
     assert.equal(registered.progress.currency, 181);
     assert.equal(registered.progress.game2048LevelsCompleted, 2);
     assert.equal(registered.progress.dailyGameRewards.date, '2026-08-16');
-    assert.deepEqual(registered.progress.fourGameChallenge, { version: 1, completedGames: [] });
+    assert.deepEqual(registered.progress.fourGameChallenge, {
+      version: 1,
+      completedGames: ['game2048', 'bubbles', 'match3'],
+    });
     assert.equal(JSON.stringify(registered).includes(TEST_PASSWORD), false);
 
     const database = new DatabaseSync(path.join(tempRoot, 'accounts.sqlite'), { readOnly: true });
@@ -223,6 +226,13 @@ test('phone/password registration, session, progress sync, logout and cross-devi
 
     const tampered = baseProgress('2026-08-16');
     tampered.currency = 999_999;
+    tampered.currentLevel = 117;
+    tampered.levels = {
+      ...tampered.levels,
+      50: { stars: 3, bestScore: 12_000, completed: true },
+      51: { stars: 3, bestScore: 12_500, completed: true },
+      100: { stars: 3, bestScore: 15_000, completed: true },
+    };
     tampered.game2048LevelsCompleted = 999;
     tampered.bubbleLevelsCompleted = 999;
     tampered.dailyGameRewards.earned = { match3: 30, game2048: 30, bubbles: 30, pet: 30 };
@@ -234,8 +244,13 @@ test('phone/password registration, session, progress sync, logout and cross-devi
     assert.equal(firstSync.status, 200);
     const firstSyncProgress = (await firstSync.json()).progress;
     assert.equal(firstSyncProgress.currency, 301);
-    assert.equal(firstSyncProgress.game2048LevelsCompleted, 100);
-    assert.equal(firstSyncProgress.bubbleLevelsCompleted, 100);
+    assert.equal(firstSyncProgress.currentLevel, 51);
+    assert.equal(firstSyncProgress.levels[50]?.completed, true);
+    assert.equal(firstSyncProgress.levels[51], undefined);
+    assert.equal(firstSyncProgress.levels[100], undefined);
+    assert.equal(firstSyncProgress.game2048LevelsCompleted, 50);
+    assert.equal(firstSyncProgress.bubbleLevelsCompleted, 50);
+    assert.deepEqual(firstSyncProgress.fourGameChallenge.completedGames, ['game2048', 'bubbles', 'match3']);
 
     const repeatedSync = await fetch(`${origin}/api/account/progress`, {
       method: 'PUT',
@@ -525,6 +540,10 @@ test('four-game challenge progress is allowlisted and cannot regress across stal
   const service = await startTestService(tempRoot, () => currentTime);
   const origin = `http://127.0.0.1:${service.port}`;
   const progress = baseProgress('2026-08-20');
+  progress.currentLevel = 1;
+  progress.levels = {};
+  progress.game2048LevelsCompleted = 0;
+  progress.bubbleLevelsCompleted = 0;
   progress.fourGameChallenge = {
     version: 999,
     completedGames: ['pet', 'unknown-game', 'pet'],

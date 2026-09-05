@@ -346,7 +346,7 @@ export function TamagotchiScreen() {
             <ArrowLeft size={20} />
           </button>
           <div className="min-w-0 text-center">
-            <p className="font-heading text-sm font-bold text-primary tracking-wide truncate">{pet.name}</p>
+            <p className="font-heading text-sm font-bold text-primary tracking-wide truncate">Пестун</p>
             <p className="text-white/45 text-[10px]">{STAGE_LABELS[pet.stage]}</p>
           </div>
           <button
@@ -463,7 +463,7 @@ export function TamagotchiScreen() {
             <div className="grid grid-cols-[1fr_auto] gap-3 items-end mt-3 pt-3 border-t border-white/10">
               <div>
                 <div className="flex justify-between text-[10px] mb-1">
-                  <span className="text-white/55 font-semibold">Привязанность · уровень {level}</span>
+                  <span className="text-white/55 font-semibold">Привязанность</span>
                   <span className="text-primary tabular-nums">{levelProgress.current}/{levelProgress.max}</span>
                 </div>
                 <ProgressBar current={levelProgress.current} max={levelProgress.max} color={color} />

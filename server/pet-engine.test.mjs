@@ -100,13 +100,13 @@ test('занятия открываются по уровню и взросле�
 });
 
 test('новый термлин сохраняет общий уровень, а этап считается только при его повышении', () => {
-  const previous = createPet('yaromir', START, 9_899);
+  const previous = createPet('yaromir', START, 4_899);
   const adopted = createPet('valkiriya', START + 1_000, previous.experience);
-  assert.equal(getPetLevel(adopted), 99);
+  assert.equal(getPetLevel(adopted), 49);
   assert.equal(adopted.stage, 'adult');
   assert.equal(hasPetAdvancedLevel(previous, adopted), false);
-  assert.equal(hasPetAdvancedLevel(adopted, { ...adopted, experience: 9_900 }), true);
-  const maxLevelPet = { ...adopted, experience: 9_900 };
+  assert.equal(hasPetAdvancedLevel(adopted, { ...adopted, experience: 4_900 }), true);
+  const maxLevelPet = { ...adopted, experience: 4_900 };
   assert.equal(qualifiesPetLevelCompletion(maxLevelPet, maxLevelPet), true);
 });
 

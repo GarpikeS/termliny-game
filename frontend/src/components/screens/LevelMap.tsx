@@ -48,13 +48,13 @@ const BATH_CONFIGS: Record<number, { positions: { x: number; y: number }[]; isSq
       { x: 30, y: 24.5 }, { x: 70, y: 16.5 },
     ],
   },
-  // bath-5: Баня-бочка — квадратное, 12 кругов
+  // bath-5: Баня-бочка — квадратное, 10 кругов
   5: {
     isSquare: true,
     positions: [
-      { x: 47, y: 85 }, { x: 64, y: 79.5 }, { x: 48, y: 73.5 }, { x: 34, y: 67.5 },
-      { x: 51, y: 61.5 }, { x: 66, y: 55.5 }, { x: 49, y: 50.5 }, { x: 34, y: 44.8 },
-      { x: 49, y: 39.2 }, { x: 68, y: 33 }, { x: 55, y: 28 }, { x: 43, y: 22.8 },
+      { x: 47, y: 85 }, { x: 64, y: 79 }, { x: 48, y: 72 }, { x: 34, y: 65 },
+      { x: 51, y: 58 }, { x: 66, y: 51 }, { x: 49, y: 44 }, { x: 34, y: 37 },
+      { x: 55, y: 29 }, { x: 43, y: 22.8 },
     ],
   },
   // bath-6: Липовая сауна — квадратное, 10 кругов
@@ -107,6 +107,16 @@ const BATH_CONFIGS: Record<number, { positions: { x: number; y: number }[]; isSq
   },
 };
 
+function selectLevelPositions(positions: { x: number; y: number }[], levelCount: number) {
+  if (levelCount <= 0) return [];
+  if (levelCount === 1) return positions.slice(0, 1);
+  if (levelCount >= positions.length) return positions.slice(0, levelCount);
+
+  return Array.from({ length: levelCount }, (_, index) => (
+    positions[Math.round((index * (positions.length - 1)) / (levelCount - 1))]
+  ));
+}
+
 export function LevelMap() {
   const navigate = useNavigate();
   const { bathhouseId } = useParams<{ bathhouseId: string }>();
@@ -117,6 +127,7 @@ export function LevelMap() {
 
   // Конфигурация бани
   const config = BATH_CONFIGS[bhId] ?? BATH_CONFIGS[1];
+  const levelPositions = selectLevelPositions(config.positions, bLevels.length);
   const bathImage = `/images/levels/bath-${bhId}.jpg`;
 
   const handleMapPointerClick = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -127,7 +138,7 @@ export function LevelMap() {
     const pointerX = ((event.clientX - bounds.left) / bounds.width) * 100;
     const pointerY = ((event.clientY - bounds.top) / bounds.height) * 100;
 
-    const nearest = config.positions.reduce(
+    const nearest = levelPositions.reduce(
       (best, position, index) => {
         const dx = ((pointerX - position.x) / 100) * bounds.width;
         const dy = ((pointerY - position.y) / 100) * bounds.height;
@@ -192,7 +203,7 @@ export function LevelMap() {
           sourceHeight={1024}
         >
           <div className="absolute inset-0 z-10" onClickCapture={handleMapPointerClick}>
-          {config.positions.map((pos, idx) => {
+          {levelPositions.map((pos, idx) => {
             const level = bLevels[idx];
             if (!level) return null;
             const lp = progress.levels[level.id];
@@ -201,7 +212,7 @@ export function LevelMap() {
             const current = level.id === progress.currentLevel;
 
             // Размер зоны клика
-            const compactNode = config.isSquare || config.positions.length > 12;
+            const compactNode = config.isSquare || levelPositions.length > 12;
             const clickSize = compactNode ? 'w-11 h-11' : 'w-14 h-14';
 
             return (
@@ -225,7 +236,7 @@ export function LevelMap() {
                 transition={{ delay: idx * 0.02 }}
                 onClick={() => unlocked && navigate(`/games/match3/play/${level.id}`)}
                 disabled={!unlocked}
-                aria-label={`Уровень ${idx + 1}: ${level.name}${unlocked ? '' : ', закрыто'}`}
+                aria-label={`Уровень ${level.id}: ${level.name}${unlocked ? '' : ', закрыто'}`}
               >
                 {/* Glow for current level */}
                 {current && (
@@ -250,7 +261,7 @@ export function LevelMap() {
                 >
                   {unlocked ? (
                     <span className={cn('text-white font-bold drop-shadow', compactNode ? 'text-[10px]' : 'text-xs')}>
-                      {idx + 1}
+                      {level.id}
                     </span>
                   ) : (
                     <Lock size={compactNode ? 8 : 10} className="text-white/50" />

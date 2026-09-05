@@ -8,6 +8,7 @@ import { TokenIcon } from '@/components/ui/TokenIcon';
 import { Match3Coach } from './Match3Coach';
 import type { Match3TutorialStep } from './Match3Coach';
 import { GameStatusBar } from './GameStatusBar';
+import { GAME_NAMES } from '@/data/gameNames';
 import type { CSSProperties } from 'react';
 
 interface GameHUDProps {
@@ -40,7 +41,7 @@ export function GameHUD({ level, levelName, score, movesLeft, currency, objectiv
             <Pause size={20} />
           </button>
         </div>
-        <h3 title={levelName}>{levelName}</h3>
+        <h3 title={levelName}>{GAME_NAMES.match3}</h3>
         <div className="game-hud__side game-hud__side--right">
           {character ? (
             abilityReady && onAbility ? (

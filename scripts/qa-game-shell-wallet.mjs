@@ -196,6 +196,7 @@ async function dispatchChromiumTouchSwipe(page, dx, dy) {
 }
 
 async function assertStableSlavichLayout(page, engine = 'chromium') {
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const initial = await page.evaluate(() => {
     const shell = document.querySelector('.app-shell');
     const frame = document.querySelector('.phone-frame');
@@ -247,7 +248,7 @@ async function assertStableSlavichLayout(page, engine = 'chromium') {
       for (const dimension of Object.keys(before)) {
         assert.ok(
           Math.abs(before[dimension] - after[dimension]) <= 1,
-          `Славич: ${region}.${dimension} не должен прыгать при движении адресной панели`,
+          `Славич: ${region}.${dimension} не должен прыгать при движении адресной панели (до ${before[dimension]}, после ${after[dimension]})`,
         );
       }
     }
@@ -272,7 +273,7 @@ async function assertStableSlavichLayout(page, engine = 'chromium') {
   assert.equal(await page.getByRole('button', { name: 'Отменить последний ход' }).isDisabled(), false, `Славич: touch-свайп должен работать в ${engine}`);
 }
 
-async function assertGameShell(page, route, viewport, surfaceSelector, engine = 'chromium') {
+async function assertGameShell(page, route, viewport, surfaceSelector, gameTitle, engine = 'chromium') {
   await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded' });
   await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
   if (route.startsWith('/games/match3/play/')) {
@@ -283,12 +284,14 @@ async function assertGameShell(page, route, viewport, surfaceSelector, engine = 
   const status = page.locator('[data-game-status]');
   await nav.waitFor();
   await status.waitFor();
+  await page.getByText(gameTitle, { exact: true }).first().waitFor();
+  await page.evaluate(() => document.fonts?.ready);
   assert.equal(await page.getByRole('button', { name: 'Игры', exact: true }).getAttribute('aria-current'), 'page');
   assert.equal((await page.locator('[data-global-wallet]').textContent())?.trim(), '37');
   assert.equal((await page.locator('[data-game-wallet-balance]').textContent())?.trim(), '37');
   assert.equal((await page.locator('[data-game-level-current]').textContent())?.trim(), '1');
-  assert.equal((await page.locator('[data-game-level-total]').textContent())?.trim(), '100');
-  assert.match((await page.locator('[data-game-level]').textContent()) ?? '', /Уровень\s*1 из 100/);
+  assert.equal((await page.locator('[data-game-level-total]').textContent())?.trim(), '50');
+  assert.match((await page.locator('[data-game-level]').textContent()) ?? '', /Уровень\s*1 из 50/);
 
   const geometry = await page.evaluate(selector => {
     const navElement = document.querySelector('.bottom-nav');
@@ -355,10 +358,10 @@ async function closePreview() {
 }
 
 const scenarios = [
-  { name: 'slavich', route: '/games/2048', surface: '.game-2048-board' },
-  { name: 'biryulki', route: '/games/bubbles', surface: '.bubble-field-area' },
-  { name: 'pestun', route: '/games/pet', surface: null },
-  { name: 'horovod', route: '/games/match3/play/1', surface: '.match3-board' },
+  { name: 'slavich', title: 'Славич', route: '/games/2048', surface: '.game-2048-board' },
+  { name: 'biryulki', title: 'Бирюльки', route: '/games/bubbles', surface: '.bubble-field-area' },
+  { name: 'pestun', title: 'Пестун', route: '/games/pet', surface: null },
+  { name: 'horovod', title: 'Хоровод', route: '/games/match3/play/1', surface: '.match3-board' },
 ];
 const viewports = [
   { width: 320, height: 568 },
@@ -375,7 +378,7 @@ try {
   for (const viewport of viewports) {
     for (const scenario of scenarios) {
       const { context, page, runtimeErrors } = await newPage(browser, viewport);
-      await assertGameShell(page, scenario.route, viewport, scenario.surface);
+      await assertGameShell(page, scenario.route, viewport, scenario.surface, scenario.title);
       await page.screenshot({
         path: path.join(outputRoot, `${scenario.name}-${viewport.width}x${viewport.height}.png`),
         fullPage: true,
@@ -389,8 +392,31 @@ try {
 
   {
     const { context, page, runtimeErrors } = await newPage(browser, { width: 390, height: 844 });
+    await page.goto(`${baseUrl}/games/match3`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
+    const bathhouseButtons = page.locator('.scene-canvas button[aria-label]');
+    assert.equal(await bathhouseButtons.count(), 10, 'Хоровод: карта должна содержать десять глав по 5 уровней');
+    await bathhouseButtons.last().waitFor({ state: 'visible' });
+    await page.waitForTimeout(900);
+    await page.screenshot({
+      path: path.join(outputRoot, 'horovod-bathhouse-map-390x844.png'),
+      fullPage: true,
+    });
+    await page.goto(`${baseUrl}/games/match3/levels/10`, { waitUntil: 'domcontentloaded' });
+    const finalBathhouseLevels = page.locator('.scene-canvas button[aria-label^="Уровень "]');
+    await page.getByRole('button', { name: /^Уровень 46:/ }).waitFor();
+    assert.equal(await finalBathhouseLevels.count(), 5, 'Хоровод: в десятой главе должны быть уровни 46–50');
+    await page.getByRole('button', { name: /^Уровень 50:/ }).waitFor();
+    await page.goto(`${baseUrl}/games/match3/play/51`, { waitUntil: 'domcontentloaded' });
+    await page.getByText('Уровень не найден', { exact: true }).waitFor();
+    assert.deepEqual(runtimeErrors, [], 'Хоровод: карта и граница 50-го уровня');
+    await context.close();
+  }
+
+  {
+    const { context, page, runtimeErrors } = await newPage(browser, { width: 390, height: 844 });
     await page.goto(`${baseUrl}/games/2048`, { waitUntil: 'domcontentloaded' });
-    const completedHeading = page.getByRole('heading', { name: 'Уровень 1 из 100 пройден!', exact: true });
+    const completedHeading = page.getByRole('heading', { name: 'Уровень 1 из 50 пройден!', exact: true });
     const directions = ['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp'];
     for (let move = 0; move < 160 && !(await completedHeading.isVisible()); move += 1) {
       await page.keyboard.press(directions[move % directions.length]);
@@ -442,10 +468,10 @@ try {
       },
     );
     await page.goto(`${baseUrl}/games/pet`, { waitUntil: 'domcontentloaded' });
-    await page.locator('[data-game-level-current]').getByText('99', { exact: true }).waitFor();
-    assert.equal((await page.locator('[data-game-current-metric]').textContent())?.trim(), '99/100');
+    await page.locator('[data-game-level-current]').getByText('50', { exact: true }).waitFor();
+    assert.equal((await page.locator('[data-game-current-metric]').textContent())?.trim(), '100/100');
     await page.goto(`${baseUrl}/profile`, { waitUntil: 'domcontentloaded' });
-    await page.getByText('Уровень 99 из 100', { exact: true }).waitFor();
+    await page.getByText('Уровень 50 из 50', { exact: true }).waitFor();
     assert.deepEqual(runtimeErrors, [], 'Пестун: retained departure level errors');
     await context.close();
   }
@@ -474,14 +500,14 @@ try {
         best2048Score: 100_000_000,
         currentLevel: 117,
         levels: {
-          100: { stars: 3, bestScore: 12_000, completed: true },
-          101: { stars: 3, bestScore: 12_500, completed: true },
+          50: { stars: 3, bestScore: 12_000, completed: true },
+          51: { stars: 3, bestScore: 12_500, completed: true },
           116: { stars: 3, bestScore: 15_000, completed: true },
         },
       },
     );
     await page.goto(`${baseUrl}/games/2048`, { waitUntil: 'domcontentloaded' });
-    await page.locator('[data-game-level-current]').getByText('100', { exact: true }).waitFor();
+    await page.locator('[data-game-level-current]').getByText('50', { exact: true }).waitFor();
     const statusValuesFit = await page.evaluate(() => {
       const wallet = document.querySelector('[data-game-wallet-balance]');
       const level = document.querySelector('[data-game-level] strong');
@@ -493,14 +519,19 @@ try {
     });
     assert.equal(Number(statusValuesFit.walletText.replace(/\D/g, '')), 1_000_000);
     assert.ok(statusValuesFit.walletFits, 'large wallet balance must remain fully visible');
-    assert.ok(statusValuesFit.levelFits, 'level 100 of 100 must remain fully visible');
+    assert.ok(statusValuesFit.levelFits, 'level 50 of 50 must remain fully visible');
     const storedMatch3LevelIds = await page.evaluate(() => (
       Object.keys(JSON.parse(localStorage.getItem('termliny-progress') ?? '{}').levels ?? {}).map(Number)
     ));
-    assert.deepEqual(storedMatch3LevelIds, [100], 'legacy Match-3 levels above 100 must be removed');
+    assert.deepEqual(storedMatch3LevelIds, [50], 'legacy Match-3 levels above 50 must be removed');
+    assert.deepEqual(
+      await page.evaluate(() => JSON.parse(localStorage.getItem('termliny-progress') ?? '{}').fourGameChallenge?.completedGames),
+      ['game2048', 'match3'],
+      'legacy completions must remain eligible for the four-game challenge',
+    );
     await assertNoHorizontalOverflow(page);
     await page.screenshot({
-      path: path.join(outputRoot, 'slavich-level-100-large-wallet-320x568.png'),
+      path: path.join(outputRoot, 'slavich-level-50-large-wallet-320x568.png'),
       fullPage: true,
     });
     assert.deepEqual(runtimeErrors, [], 'max level and large wallet errors');
@@ -511,7 +542,17 @@ try {
     const serverProgress = {
       ...progressSeed(),
       currency: 321,
-      bubbleLevelsCompleted: 49,
+      currentLevel: 117,
+      dailyGameRewards: {
+        date: '2000-01-01',
+        earned: { match3: 30, game2048: 20, bubbles: 10, pet: 0 },
+      },
+      levels: {
+        50: { stars: 3, bestScore: 12_000, completed: true },
+        51: { stars: 3, bestScore: 12_500, completed: true },
+      },
+      game2048LevelsCompleted: 99,
+      bubbleLevelsCompleted: 99,
     };
     const authSession = {
       account: {
@@ -538,6 +579,13 @@ try {
     await page.goto(`${baseUrl}/games/bubbles`, { waitUntil: 'domcontentloaded' });
     await page.locator('[data-game-level-current]').getByText('50', { exact: true }).waitFor();
     assert.equal(Number((await page.locator('[data-game-wallet-balance]').textContent())?.replace(/\D/g, '')), 321);
+    const hydratedProgress = await page.evaluate(() => JSON.parse(localStorage.getItem('termliny-progress') ?? '{}'));
+    assert.equal(hydratedProgress.currentLevel, 51);
+    assert.equal(hydratedProgress.game2048LevelsCompleted, 50);
+    assert.equal(hydratedProgress.bubbleLevelsCompleted, 50);
+    assert.deepEqual(Object.keys(hydratedProgress.levels ?? {}).map(Number), [50]);
+    assert.deepEqual(hydratedProgress.dailyGameRewards, serverProgress.dailyGameRewards);
+    assert.deepEqual(hydratedProgress.fourGameChallenge?.completedGames, ['game2048', 'bubbles', 'match3']);
     assert.equal(
       await page.evaluate(() => localStorage.getItem('termliny-progress-owner')),
       'account:qa-account-level-hydration',
@@ -551,7 +599,7 @@ try {
     webkitBrowser = await webkit.launch({ headless: true });
     const viewport = { width: 390, height: 844 };
     const { context, page, runtimeErrors } = await newPage(webkitBrowser, viewport);
-    await assertGameShell(page, '/games/2048', viewport, '.game-2048-board', 'webkit');
+    await assertGameShell(page, '/games/2048', viewport, '.game-2048-board', 'Славич', 'webkit');
     assert.deepEqual(runtimeErrors, [], 'Славич: WebKit mobile layout errors');
     await context.close();
   }

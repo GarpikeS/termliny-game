@@ -5,6 +5,7 @@ import {
   FOUR_GAME_CHALLENGE_ID,
   FOUR_GAME_CHALLENGE_SOURCES,
   addFourGameCompletion,
+  backfillFourGameChallengeProgress,
   createFourGameChallengeProgress,
   getFourGameChallengeCount,
   isFourGameChallengeComplete,
@@ -70,4 +71,17 @@ test('слияние прогресса монотонно и не меняет 
   assert.deepEqual(mergedAgain, merged);
   assert.deepEqual(guest, guestSnapshot);
   assert.deepEqual(account, accountSnapshot);
+});
+
+test('старые игровые результаты восстанавливают отметки кампании без повторного прохождения', () => {
+  const migrated = backfillFourGameChallengeProgress(undefined, {
+    currentLevel: 117,
+    levels: { 50: { completed: true } },
+    game2048LevelsCompleted: 99,
+    bubbleLevelsCompleted: 99,
+    petDeparture: { experience: 9_899 },
+  });
+
+  assert.deepEqual(migrated.completedGames, FOUR_GAME_CHALLENGE_SOURCES);
+  assert.deepEqual(backfillFourGameChallengeProgress(migrated, {}), migrated);
 });

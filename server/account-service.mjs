@@ -23,7 +23,7 @@ const FOUR_GAME_CAMPAIGN_ID = 'four-games-v1';
 const FOUR_GAME_CHALLENGE_SOURCES = ['game2048', 'bubbles', 'pet', 'match3'];
 const DAILY_GAME_REWARD_LIMIT = 30;
 const DAILY_TOTAL_REWARD_LIMIT = 120;
-const GAME_LEVEL_TOTAL = 100;
+const GAME_LEVEL_TOTAL = 50;
 const DEFAULT_CITY = 'Москва';
 const DEFAULT_TIME_ZONE = 'Europe/Moscow';
 const CITY_TIMEZONES = {
@@ -265,6 +265,24 @@ function normalizeFourGameChallenge(value, previousValue = null) {
   };
 }
 
+function backfillFourGameChallenge(progress) {
+  const completed = new Set(normalizeFourGameChallenge(progress.fourGameChallenge).completedGames);
+  const levels = plainObject(progress.levels);
+  const currentLevel = safeInteger(progress.currentLevel, 1, GAME_LEVEL_TOTAL + 1, 1);
+  const pet = plainObject(progress.pet);
+  const petDeparture = plainObject(progress.petDeparture);
+
+  if (safeInteger(progress.game2048LevelsCompleted, 0, GAME_LEVEL_TOTAL, 0) > 0) completed.add('game2048');
+  if (safeInteger(progress.bubbleLevelsCompleted, 0, GAME_LEVEL_TOTAL, 0) > 0) completed.add('bubbles');
+  if (currentLevel > 1 || Object.values(levels).some(level => plainObject(level).completed === true)) completed.add('match3');
+  if (
+    safeInteger(pet.experience, 0, 100_000_000, 0) >= 100
+    || safeInteger(petDeparture.experience, 0, 100_000_000, 0) >= 100
+  ) completed.add('pet');
+
+  return normalizeFourGameChallenge({ completedGames: [...completed] });
+}
+
 function normalizePetDeparture(value) {
   const source = plainObject(value);
   const adoptionId = cleanText(source.adoptionId, 100);
@@ -304,11 +322,13 @@ function mergeLevels(incomingValue, previousValue) {
   const incoming = plainObject(incomingValue);
   const previous = plainObject(previousValue);
   const merged = {};
-  const levelIds = new Set([...Object.keys(previous), ...Object.keys(incoming)]);
-  for (const key of [...levelIds].slice(0, GAME_LEVEL_TOTAL)) {
-    if (!/^\d{1,3}$/.test(key)) continue;
-    const id = Number(key);
-    if (id < 1 || id > GAME_LEVEL_TOTAL) continue;
+  const levelIds = [...new Set([...Object.keys(previous), ...Object.keys(incoming)])]
+    .filter(key => /^\d{1,3}$/.test(key))
+    .map(Number)
+    .filter(id => id >= 1 && id <= GAME_LEVEL_TOTAL)
+    .sort((first, second) => first - second);
+  for (const id of levelIds) {
+    const key = String(id);
     const before = plainObject(previous[key]);
     const next = plainObject(incoming[key]);
     merged[id] = {
@@ -557,11 +577,15 @@ function sanitizeProgress(inputValue, options) {
     orders: sanitizeOrders(input.orders),
   };
 
-  const serialized = JSON.stringify(progress);
+  const migratedProgress = {
+    ...progress,
+    fourGameChallenge: backfillFourGameChallenge(progress),
+  };
+  const serialized = JSON.stringify(migratedProgress);
   if (Buffer.byteLength(serialized) > MAX_PROGRESS_BYTES) {
     throw new AccountHttpError(413, 'Прогресс слишком большой для синхронизации.');
   }
-  return progress;
+  return migratedProgress;
 }
 
 function parseProgress(value) {

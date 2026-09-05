@@ -213,6 +213,7 @@ try {
     });
     const startedAt = Date.now();
     await page.goto(`${baseUrl}/games`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
     assert.equal(await page.locator('[data-portal-sequence]').count(), 4);
     assert.equal(await page.locator('[data-portal-tour]').getAttribute('data-portal-tour'), 'active', 'first visit must run the portal tour');
     const activeTourStates = await getPortalTourVisualState(page);
@@ -342,6 +343,7 @@ try {
       },
     });
     await page.goto(`${baseUrl}/games`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
     await page.waitForTimeout(350);
     assert.equal(await page.locator('[data-four-game-challenge]').count(), 0, 'claimed campaign must stay hidden');
     assert.deepEqual(runtimeErrors, []);
