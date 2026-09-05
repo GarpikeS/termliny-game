@@ -17,22 +17,24 @@ if (!playwrightRoot) throw new Error('Playwright runtime was not found. Set CODE
 const { chromium, webkit } = require(playwrightRoot);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = path.join(projectRoot, 'frontend');
-const outputRoot = path.join(projectRoot, 'artifacts', 'qa-game-shell-wallet');
+const externalBaseUrl = process.env.QA_BASE_URL?.replace(/\/$/, '');
+const outputRoot = path.join(projectRoot, 'artifacts', externalBaseUrl ? 'qa-game-shell-wallet-production' : 'qa-game-shell-wallet');
 const port = 43998;
-const baseUrl = `http://127.0.0.1:${port}`;
+const baseUrl = externalBaseUrl ?? `http://127.0.0.1:${port}`;
 let previewClosing = false;
 let previewDiagnostics = '';
-const preview = spawn(
+const preview = externalBaseUrl ? null : spawn(
   process.execPath,
   [path.join(frontendRoot, 'node_modules', 'vite', 'bin', 'vite.js'), 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
   { cwd: frontendRoot, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
 );
-for (const stream of [preview.stdout, preview.stderr]) {
+for (const stream of [preview?.stdout, preview?.stderr]) {
+  if (!stream) continue;
   stream.on('data', chunk => {
     previewDiagnostics = `${previewDiagnostics}${chunk}`.slice(-4_000);
   });
 }
-preview.on('exit', (code, signal) => {
+preview?.on('exit', (code, signal) => {
   if (!previewClosing) {
     console.error(`Vite preview exited early (code=${code}, signal=${signal}).\n${previewDiagnostics}`);
   }
@@ -342,6 +344,7 @@ async function assertGameShell(page, route, viewport, surfaceSelector, engine = 
 }
 
 async function closePreview() {
+  if (!preview) return;
   previewClosing = true;
   if (preview.exitCode === null) preview.kill();
   await new Promise(resolve => {
