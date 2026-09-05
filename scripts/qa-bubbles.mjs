@@ -42,6 +42,7 @@ const progress = JSON.stringify({
   tutorialCompleted: true,
   tutorialFlags: ['bubbles-aim', 'bubbles-match'],
   best2048Score: 0,
+  game2048LevelsCompleted: 0,
   bubbleLevelsCompleted: 0,
   pet: null,
   unlockedCharacters: ['yaromir'],
@@ -90,12 +91,13 @@ async function seedAndOpen(page) {
   await page.addInitScript(value => localStorage.setItem('termliny-progress', value), progress);
   await page.goto(`${baseUrl}/games/bubbles`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
-  await page.getByText('Бирюльки — Ур. 1/50', { exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Бирюльки', exact: true }).waitFor();
+  await page.getByText('1 из 100', { exact: true }).waitFor();
   await page.waitForTimeout(500);
 }
 
 async function getShots(page) {
-  return Number(await page.locator('[data-game-secondary-metric]').textContent());
+  return Number(await page.locator('[data-bubbles-shots]').textContent());
 }
 
 async function waitForShotToLand(page) {
@@ -160,7 +162,7 @@ async function runInteractive(browser, report) {
     await page.mouse.move(box.x + box.width * 0.03, box.y + box.height * 0.18, { steps: 5 });
     const shotStartedAt = Date.now();
     await page.mouse.up();
-    await page.waitForFunction(() => Number(document.querySelector('[data-game-secondary-metric]')?.textContent) === 28);
+    await page.waitForFunction(() => Number(document.querySelector('[data-bubbles-shots]')?.textContent) === 28);
     await waitForShotToLand(page);
     const flightDuration = Date.now() - shotStartedAt;
     assert.ok(flightDuration < 1800, `бросок с рикошетом должен завершаться быстрее 1800 мс, получено ${flightDuration} мс`);
@@ -178,7 +180,7 @@ async function runInteractive(browser, report) {
     await page.mouse.down();
     await page.mouse.move(box.x + box.width * 0.97, box.y + box.height * 0.18, { steps: 5 });
     await page.mouse.up();
-    await page.waitForFunction(() => Number(document.querySelector('[data-game-secondary-metric]')?.textContent) === 28);
+    await page.waitForFunction(() => Number(document.querySelector('[data-bubbles-shots]')?.textContent) === 28);
     await waitForShotToLand(page);
     const rightAttachedCount = await field.locator('.venik-bubble').count();
     assert.notEqual(rightAttachedCount, 33, 'бросок через правую стенку должен закрепиться или собрать группу');

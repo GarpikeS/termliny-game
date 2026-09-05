@@ -7,6 +7,7 @@ import {
   createFourGameChallengeProgress,
   normalizeFourGameChallengeProgress,
 } from '@/features/rewards/fourGameChallenge';
+import { GAME_LEVEL_TOTAL } from '@/data/gameProgression';
 
 const STORAGE_KEY = 'termliny-progress';
 const STORAGE_OWNER_KEY = 'termliny-progress-owner';
@@ -35,6 +36,7 @@ const DEFAULT_PROGRESS: PlayerProgress = {
   tutorialCompleted: false,
   tutorialFlags: [],
   best2048Score: 0,
+  game2048LevelsCompleted: 0,
   bubbleLevelsCompleted: 0,
   pet: null,
   petDeparture: null,
@@ -74,6 +76,18 @@ export function loadProgress(): PlayerProgress {
     const owner = normalizeProgressOwner(localStorage.getItem(STORAGE_OWNER_KEY))
       ?? (hadAccountCampaignClaim ? UNKNOWN_ACCOUNT_PROGRESS_OWNER : GUEST_PROGRESS_OWNER);
     const parsed = { ...DEFAULT_PROGRESS, ...storedValue } as PlayerProgress;
+    parsed.currentLevel = Math.max(1, Math.min(GAME_LEVEL_TOTAL + 1, Math.floor(Number(parsed.currentLevel) || 1)));
+    parsed.game2048LevelsCompleted = Math.max(0, Math.min(GAME_LEVEL_TOTAL, Math.floor(Number(parsed.game2048LevelsCompleted) || 0)));
+    parsed.bubbleLevelsCompleted = Math.max(0, Math.min(GAME_LEVEL_TOTAL, Math.floor(Number(parsed.bubbleLevelsCompleted) || 0)));
+    const storedLevels = parsed.levels && typeof parsed.levels === 'object' && !Array.isArray(parsed.levels)
+      ? parsed.levels
+      : {};
+    parsed.levels = Object.fromEntries(
+      Object.entries(storedLevels).filter(([id]) => {
+        const numericId = Number(id);
+        return Number.isInteger(numericId) && numericId >= 1 && numericId <= GAME_LEVEL_TOTAL;
+      }),
+    );
     if (!Array.isArray(parsed.tutorialFlags)) {
       parsed.tutorialFlags = [];
     }
@@ -86,6 +100,13 @@ export function loadProgress(): PlayerProgress {
       || !['hunger', 'happiness', 'energy', 'cleanliness'].includes(parsed.petDeparture.depletedStat)
     ) {
       parsed.petDeparture = null;
+    } else {
+      parsed.petDeparture = {
+        ...parsed.petDeparture,
+        experience: Number.isFinite(parsed.petDeparture.experience)
+          ? Math.max(0, Math.floor(parsed.petDeparture.experience ?? 0))
+          : 0,
+      };
     }
     if (parsed.pet) parsed.pet = normalizePetState(parsed.pet);
     parsed.dailyGameRewards = normalizeDailyGameRewards(parsed.dailyGameRewards);

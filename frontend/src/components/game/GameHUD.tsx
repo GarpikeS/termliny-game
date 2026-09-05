@@ -11,6 +11,7 @@ import { GameStatusBar } from './GameStatusBar';
 import type { CSSProperties } from 'react';
 
 interface GameHUDProps {
+  level: number;
   levelName: string;
   score: number;
   movesLeft: number;
@@ -24,7 +25,7 @@ interface GameHUDProps {
   abilityTutorial?: Extract<Match3TutorialStep, { kind: 'ability' }> | null;
 }
 
-export function GameHUD({ levelName, score, movesLeft, currency, objectives, onPause, character, abilityReady, onAbility, highlightAbility, abilityTutorial }: GameHUDProps) {
+export function GameHUD({ level, levelName, score, movesLeft, currency, objectives, onPause, character, abilityReady, onAbility, highlightAbility, abilityTutorial }: GameHUDProps) {
   return (
     <div className="game-hud game-hud--match3 text-white px-4 pb-3">
       {/* Top row */}
@@ -73,11 +74,12 @@ export function GameHUD({ levelName, score, movesLeft, currency, objectives, onP
       )}
 
       <GameStatusBar
+        level={level}
         metricLabel="Счёт игры"
         metricValue={score}
-        secondaryLabel="Ходы"
-        secondaryValue={movesLeft}
-        secondaryValueDataAttribute="data-game-moves"
+        detailLabel="Ходы"
+        detailValue={movesLeft}
+        detailValueDataAttribute="data-game-moves"
         currency={currency}
       />
 

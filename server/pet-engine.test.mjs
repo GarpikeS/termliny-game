@@ -9,7 +9,9 @@ import {
   createPet,
   getDepletedPetStat,
   getPetLevel,
+  hasPetAdvancedLevel,
   normalizePetState,
+  qualifiesPetLevelCompletion,
   renamePet,
   syncPetState,
 } from '../frontend/src/engine/engine-pet/petEngine.ts';
@@ -95,6 +97,17 @@ test('занятия открываются по уровню и взросле�
   const adult = syncPetState(experienced, START + 1_000);
   assert.equal(getPetLevel(adult), 6);
   assert.equal(adult.stage, 'adult');
+});
+
+test('новый термлин сохраняет общий уровень, а этап считается только при его повышении', () => {
+  const previous = createPet('yaromir', START, 9_899);
+  const adopted = createPet('valkiriya', START + 1_000, previous.experience);
+  assert.equal(getPetLevel(adopted), 99);
+  assert.equal(adopted.stage, 'adult');
+  assert.equal(hasPetAdvancedLevel(previous, adopted), false);
+  assert.equal(hasPetAdvancedLevel(adopted, { ...adopted, experience: 9_900 }), true);
+  const maxLevelPet = { ...adopted, experience: 9_900 };
+  assert.equal(qualifiesPetLevelCompletion(maxLevelPet, maxLevelPet), true);
 });
 
 test('имя очищается, ограничивается и попадает в дневник', () => {

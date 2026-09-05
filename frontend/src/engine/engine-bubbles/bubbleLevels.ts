@@ -3,6 +3,7 @@ import type { Bubble } from './bubbleTypes.ts';
 import { getNeighbors, hexToPixel, GRID_COLS, GRID_ROWS } from './hexGrid.ts';
 import { findColorGroup } from './bubbleMatching.ts';
 import { STANDARD_WIN_REWARD } from '../../data/economy.ts';
+import { GAME_LEVEL_TOTAL } from '../../data/gameProgression.ts';
 
 export type BubblePattern = 'woven' | 'paired' | 'zigzag' | 'fortified' | 'random';
 
@@ -91,8 +92,8 @@ function generateLevel(id: number): BubbleLevel {
   return { id, name, rows, colors, shots, reward, pattern, seed: Math.imul(id, 2654435761) >>> 0 };
 }
 
-// 50 уровней
-const levels: BubbleLevel[] = Array.from({ length: 50 }, (_, i) => generateLevel(i + 1));
+// Общая для всех игр шкала из 100 реально генерируемых уровней.
+const levels: BubbleLevel[] = Array.from({ length: GAME_LEVEL_TOTAL }, (_, i) => generateLevel(i + 1));
 
 export function getBubbleLevel(id: number): BubbleLevel | undefined {
   return levels.find(l => l.id === id);

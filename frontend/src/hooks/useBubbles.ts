@@ -12,8 +12,10 @@ import {
   getBubbleShotBonus,
   getShooterColors,
   nextBubbleId,
+  type BubbleLevel,
 } from '@/engine/engine-bubbles/bubbleLevels';
 import { useGameContext } from '@/store/GameContext';
+import { getNextPlayableLevel } from '@/data/gameProgression';
 
 interface BubbleGameState {
   bubbles: Bubble[];
@@ -40,6 +42,22 @@ function randomColor(colors: BubbleColor[]): BubbleColor {
   return colors[Math.floor(Math.random() * colors.length)];
 }
 
+function createLevelState(level: BubbleLevel, fieldWidth: number, shotBonus: number): BubbleGameState {
+  const bubbles = generateBubbles(level, fieldWidth);
+  const shooterColors = getShooterColors(bubbles, level.colors);
+  return {
+    bubbles,
+    shooterColor: randomColor(shooterColors),
+    nextColor: randomColor(shooterColors),
+    score: 0,
+    level: level.id,
+    levelName: level.name,
+    isWon: false,
+    isLost: false,
+    shotsLeft: level.shots + shotBonus,
+  };
+}
+
 export function useBubbles(fieldWidth: number) {
   const {
     progress,
@@ -51,19 +69,8 @@ export function useBubbles(fieldWidth: number) {
   const shotBonus = getBubbleShotBonus(progress.selectedCharacter);
 
   const [state, setState] = useState<BubbleGameState>(() => {
-    const level = getBubbleLevel(1)!;
-    const colors = level.colors;
-    return {
-      bubbles: generateBubbles(level, fieldWidth),
-      shooterColor: randomColor(getShooterColors(generateBubbles(level, fieldWidth), colors)),
-      nextColor: randomColor(getShooterColors(generateBubbles(level, fieldWidth), colors)),
-      score: 0,
-      level: 1,
-      levelName: level.name,
-      isWon: false,
-      isLost: false,
-      shotsLeft: level.shots + shotBonus,
-    };
+    const level = getBubbleLevel(getNextPlayableLevel(progress.bubbleLevelsCompleted)) ?? getBubbleLevel(1)!;
+    return createLevelState(level, fieldWidth, shotBonus);
   });
 
   const [aimAngle, setAimAngle] = useState(0);
@@ -248,17 +255,7 @@ export function useBubbles(fieldWidth: number) {
     burstQueueRef.current = [];
     trajectoryRef.current = [];
     setEarnedReward(null);
-    setState({
-      bubbles: generateBubbles(next, fieldWidth),
-      shooterColor: randomColor(getShooterColors(generateBubbles(next, fieldWidth), next.colors)),
-      nextColor: randomColor(getShooterColors(generateBubbles(next, fieldWidth), next.colors)),
-      score: 0,
-      level: state.level + 1,
-      levelName: next.name,
-      isWon: false,
-      isLost: false,
-      shotsLeft: next.shots + shotBonus,
-    });
+    setState(createLevelState(next, fieldWidth, shotBonus));
   }, [state.level, fieldWidth, shotBonus]);
 
   const restart = useCallback(() => {
@@ -271,17 +268,7 @@ export function useBubbles(fieldWidth: number) {
     burstQueueRef.current = [];
     trajectoryRef.current = [];
     setEarnedReward(null);
-    setState({
-      bubbles: generateBubbles(level, fieldWidth),
-      shooterColor: randomColor(getShooterColors(generateBubbles(level, fieldWidth), level.colors)),
-      nextColor: randomColor(getShooterColors(generateBubbles(level, fieldWidth), level.colors)),
-      score: 0,
-      level: state.level,
-      levelName: level.name,
-      isWon: false,
-      isLost: false,
-      shotsLeft: level.shots + shotBonus,
-    });
+    setState(createLevelState(level, fieldWidth, shotBonus));
   }, [state.level, fieldWidth, shotBonus]);
 
   return { state, earnedReward, aimAngle, setAimAngle, shoot, flying, flightTrail, bursts, nextLevel, restart, resizeField };

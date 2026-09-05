@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useRef, useCallback, useEffect, useLayoutEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, BookOpenText, Layers3, RotateCcw, Sparkles, Target, Trophy } from 'lucide-react';
@@ -145,7 +145,7 @@ export function BubbleShooterScreen() {
     return () => window.removeEventListener('resize', updateFieldWidth);
   }, [resizeField]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const area = fieldAreaRef.current;
     if (!area) return;
 
@@ -316,7 +316,7 @@ export function BubbleShooterScreen() {
           </button>
           <div className="text-center">
             <h2 className="font-heading text-sm font-bold text-primary tracking-wider">
-              Бирюльки — Ур. {state.level}/{totalLevels}
+              Бирюльки
             </h2>
             <p className="text-white/40 text-[10px]">{state.levelName}</p>
           </div>
@@ -332,6 +332,15 @@ export function BubbleShooterScreen() {
                 <Sparkles size={16} style={{ color: charColor }} />
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setCoachStep('aim')}
+              aria-label="Показать обучение"
+              aria-pressed={coachStep !== null}
+              className="min-h-11 min-w-11 flex items-center justify-center text-primary transition-colors"
+            >
+              <BookOpenText size={17} />
+            </button>
             <button type="button" aria-label="Начать заново" onClick={handleRestart} className="min-w-11 min-h-11 flex items-center justify-center text-white/80 hover:text-primary transition-colors">
               <RotateCcw size={18} />
             </button>
@@ -340,23 +349,15 @@ export function BubbleShooterScreen() {
       </div>
 
       <GameStatusBar
+        level={state.level}
+        totalLevels={totalLevels}
         metricLabel="Счёт игры"
         metricValue={displayScore}
-        secondaryLabel="Бросков"
-        secondaryValue={state.shotsLeft}
+        detailLabel="Бросков"
+        detailValue={state.shotsLeft}
+        detailValueDataAttribute="data-bubbles-shots"
         currency={progress.currency}
         className="bubble-game-screen__status bg-black/40 px-4 pb-1"
-        action={(
-          <button
-            type="button"
-            onClick={() => setCoachStep('aim')}
-            aria-label="Показать обучение"
-            aria-pressed={coachStep !== null}
-            className="game-icon-button min-h-11 min-w-11 rounded-xl"
-          >
-            <BookOpenText size={17} className="text-primary" />
-          </button>
-        )}
       />
 
       <div className="bubble-game-screen__rewards bg-black/40 px-4 pb-1 flex items-center justify-between gap-2">

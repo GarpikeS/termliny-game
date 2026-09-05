@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { StarRating } from '@/components/ui/StarRating';
 import { getStars, getReward } from '@/engine/scorer';
 import type { LevelConfig } from '@/types/game';
+import { GAME_LEVEL_TOTAL } from '@/data/gameProgression';
 
 interface WinPopupProps {
   open: boolean;
@@ -32,6 +33,9 @@ export function WinPopup({ open, score, levelConfig, onNext, onMap, earnedReward
         </motion.div>
 
         <h2 className="font-heading text-2xl text-primary font-bold">Победа!</h2>
+        <p className="text-sm font-semibold text-white/60">
+          Уровень {levelConfig.id} из {GAME_LEVEL_TOTAL} пройден
+        </p>
 
         <StarRating stars={stars} size={36} animated className="justify-center" />
 
@@ -50,7 +54,7 @@ export function WinPopup({ open, score, levelConfig, onNext, onMap, earnedReward
 
         <div className="flex gap-3 pt-2">
           <Button variant="secondary" onClick={onMap} className="flex-1">Карта</Button>
-          {levelConfig.id < 100 && (
+          {levelConfig.id < GAME_LEVEL_TOTAL && (
             <Button onClick={onNext} className="flex-1">Дальше</Button>
           )}
         </div>

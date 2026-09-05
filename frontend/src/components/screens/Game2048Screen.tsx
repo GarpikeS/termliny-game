@@ -27,7 +27,9 @@ type Game2048CoachStep = 'move' | 'merge' | null;
 export function Game2048Screen() {
   const navigate = useNavigate();
   const { progress, markTutorialSeen, spendLife } = useGameContext();
-  const { state, earnedReward, move, continueGame, undo, restart } = useGame2048();
+  const scoreMultiplier = progress.selectedCharacter === 'pereslav' ? 1.15
+    : progress.selectedCharacter === 'yaromir' ? 1.10 : 1.0;
+  const { state, earnedReward, move, continueGame, undo, restart } = useGame2048(scoreMultiplier);
   const touchRef = useRef<{ x: number; y: number } | null>(null);
   const boardAreaRef = useRef<HTMLDivElement>(null);
   const previousMoveCount = useRef(state.moveCount);
@@ -81,9 +83,6 @@ export function Game2048Screen() {
   const containerSize = Math.max(128, Math.min(300, widthLimit, heightLimit));
   const cellSize = (containerSize - GAP * (GRID_SIZE + 1)) / GRID_SIZE;
 
-  // Score multiplier
-  const scoreMultiplier = progress.selectedCharacter === 'pereslav' ? 1.15
-    : progress.selectedCharacter === 'yaromir' ? 1.10 : 1.0;
   const displayScore = Math.round(state.score * scoreMultiplier);
 
   const duplicateValue = useMemo(() => {
@@ -191,6 +190,12 @@ export function Game2048Screen() {
     restart();
   }, [restart]);
 
+  const handleContinue = useCallback(() => {
+    setAbilityUsed(false);
+    lifeSpentForLoss.current = false;
+    continueGame();
+  }, [continueGame]);
+
   const handleUndo = useCallback(() => {
     if (!state.canUndo) return;
     undo();
@@ -218,6 +223,15 @@ export function Game2048Screen() {
           </button>
           <h2 className="text-center font-heading text-base font-bold text-primary tracking-wider">Славич</h2>
           <div className="flex items-center justify-end gap-1">
+            <button
+              type="button"
+              onClick={() => setCoachStep('move')}
+              aria-label="Показать обучение"
+              aria-pressed={coachStep !== null}
+              className="min-h-11 min-w-11 flex items-center justify-center text-primary transition-colors"
+            >
+              <BookOpenText size={18} />
+            </button>
             <button
               type="button"
               aria-label="Отменить последний ход"
@@ -270,23 +284,13 @@ export function Game2048Screen() {
       </div>
 
       <GameStatusBar
+        level={state.level}
         metricLabel="Счёт игры"
         metricValue={displayScore}
-        secondaryLabel="Рекорд"
-        secondaryValue={state.bestScore}
+        detailLabel="Цель"
+        detailValue={state.targetScore}
         currency={progress.currency}
         className="game-2048-screen__status bg-black/40 px-4 pb-2"
-        action={(
-          <button
-            type="button"
-            onClick={() => setCoachStep('move')}
-            aria-label="Показать обучение"
-            aria-pressed={coachStep !== null}
-            className="game-icon-button min-h-11 min-w-11 rounded-xl"
-          >
-            <BookOpenText size={18} className="text-primary" />
-          </button>
-        )}
       />
 
       <div className="game-2048-screen__separator gold-separator" />
@@ -338,7 +342,7 @@ export function Game2048Screen() {
 
           {coachStep === 'move' && <CoachGesture kind="swipe" />}
 
-          {state.isLost && (
+          {state.isLost && !state.isWon && (
             <motion.div
               className="absolute inset-0 bg-black/60 rounded-xl flex flex-col items-center justify-center"
               initial={{ opacity: 0 }}
@@ -363,9 +367,10 @@ export function Game2048Screen() {
 
       <Win2048Popup
         open={state.isWon}
+        level={state.level}
         score={displayScore}
         earnedReward={earnedReward}
-        onContinue={continueGame}
+        onContinue={handleContinue}
         onRestart={handleRestart}
       />
 

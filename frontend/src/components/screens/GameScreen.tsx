@@ -493,6 +493,7 @@ export function GameScreen() {
       style={{ '--game-background': `url(${match3Background})` } as CSSProperties}
     >
       <GameHUD
+        level={safeConfig.id}
         levelName={config.name}
         score={state.score}
         movesLeft={state.movesLeft}

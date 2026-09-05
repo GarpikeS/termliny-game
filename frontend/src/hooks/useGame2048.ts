@@ -1,20 +1,29 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { initGrid, spawnTile, resetTileIdCounter } from '@/engine/engine-2048/grid2048';
 import type { Grid2048 } from '@/engine/engine-2048/grid2048';
-import { applyMove, canMove, hasWon, type Direction } from '@/engine/engine-2048/moves2048';
+import { applyMove, canMove, type Direction } from '@/engine/engine-2048/moves2048';
 import { useGameContext } from '@/store/GameContext';
 import { getSlavichMilestoneRewards } from '@/data/economy';
+import {
+  GAME_LEVEL_TOTAL,
+  clampGameLevel,
+  getNextPlayableLevel,
+  getSlavichLevelTarget,
+  isSlavichLevelComplete,
+} from '@/data/gameProgression';
 
 interface Game2048State {
   grid: Grid2048;
+  level: number;
+  targetScore: number;
   score: number;
   bestScore: number;
   moveCount: number;
   lastScoreGained: number;
   isWon: boolean;
   isLost: boolean;
-  continueMode: boolean;
   canUndo: boolean;
+  campaignCompleted: boolean;
 }
 
 interface Game2048Snapshot {
@@ -24,33 +33,43 @@ interface Game2048Snapshot {
   lastScoreGained: number;
   isWon: boolean;
   isLost: boolean;
-  continueMode: boolean;
 }
 
-export function useGame2048() {
-  const { progress, update2048Score, awardGameCurrency, recordFourGameCompletion } = useGameContext();
+function createRound(level: number, bestScore: number, campaignCompleted = false): Game2048State {
+  const safeLevel = clampGameLevel(level);
+  resetTileIdCounter();
+  return {
+    grid: initGrid(),
+    level: safeLevel,
+    targetScore: getSlavichLevelTarget(safeLevel),
+    score: 0,
+    bestScore,
+    moveCount: 0,
+    lastScoreGained: 0,
+    isWon: false,
+    isLost: false,
+    canUndo: false,
+    campaignCompleted,
+  };
+}
+
+export function useGame2048(scoreMultiplier = 1) {
+  const { progress, update2048Score, complete2048Level, awardGameCurrency } = useGameContext();
   const [earnedReward, setEarnedReward] = useState<number | null>(null);
-  const [state, setState] = useState<Game2048State>(() => {
-    resetTileIdCounter();
-    return {
-      grid: initGrid(),
-      score: 0,
-      bestScore: progress.best2048Score,
-      moveCount: 0,
-      lastScoreGained: 0,
-      isWon: false,
-      isLost: false,
-      continueMode: false,
-      canUndo: false,
-    };
-  });
+  const [state, setState] = useState<Game2048State>(() => (
+    createRound(
+      getNextPlayableLevel(progress.game2048LevelsCompleted),
+      progress.best2048Score,
+      progress.game2048LevelsCompleted >= GAME_LEVEL_TOTAL,
+    )
+  ));
 
   const rewardedMilestones = useRef(new Set<number>());
   const previousMove = useRef<Game2048Snapshot | null>(null);
 
   const move = useCallback((direction: Direction) => {
     setState(prev => {
-      if (prev.isLost || (prev.isWon && !prev.continueMode)) return prev;
+      if (prev.isLost || prev.isWon) return prev;
 
       const { grid: newGrid, scoreGained, moved } = applyMove(prev.grid, direction);
       if (!moved) return prev;
@@ -58,7 +77,8 @@ export function useGame2048() {
       const afterSpawn = spawnTile(newGrid);
       const newScore = prev.score + scoreGained;
       const newBest = Math.max(prev.bestScore, newScore);
-      const won = !prev.continueMode && hasWon(afterSpawn);
+      const displayedScore = Math.round(newScore * scoreMultiplier);
+      const won = !prev.campaignCompleted && isSlavichLevelComplete(displayedScore, prev.level);
       const lost = !canMove(afterSpawn);
 
       previousMove.current = {
@@ -68,10 +88,10 @@ export function useGame2048() {
         lastScoreGained: prev.lastScoreGained,
         isWon: prev.isWon,
         isLost: prev.isLost,
-        continueMode: prev.continueMode,
       };
 
       return {
+        ...prev,
         grid: afterSpawn,
         score: newScore,
         bestScore: newBest,
@@ -79,11 +99,10 @@ export function useGame2048() {
         lastScoreGained: scoreGained,
         isWon: won,
         isLost: lost,
-        continueMode: prev.continueMode,
         canUndo: true,
       };
     });
-  }, []);
+  }, [scoreMultiplier]);
 
   // Save best score
   useEffect(() => {
@@ -93,8 +112,8 @@ export function useGame2048() {
   }, [state.score, update2048Score]);
 
   useEffect(() => {
-    if (state.isWon) recordFourGameCompletion('game2048');
-  }, [recordFourGameCompletion, state.isWon]);
+    if (state.isWon) complete2048Level(state.level);
+  }, [complete2048Level, state.isWon, state.level]);
 
   // Rewards grow with the difficulty while the total remains equal to the
   // other games' daily limit of 30 termcoins.
@@ -110,8 +129,26 @@ export function useGame2048() {
   }, [state.grid, awardGameCurrency]);
 
   const continueGame = useCallback(() => {
-    setState(prev => ({ ...prev, isWon: false, continueMode: true }));
-  }, []);
+    setEarnedReward(null);
+    previousMove.current = null;
+    const campaignCompleted = state.campaignCompleted || state.level >= GAME_LEVEL_TOTAL;
+    const nextLevel = campaignCompleted ? GAME_LEVEL_TOTAL : state.level + 1;
+    if (state.isLost) {
+      rewardedMilestones.current.clear();
+      setState(createRound(nextLevel, state.bestScore, campaignCompleted));
+      return;
+    }
+    setState(prev => {
+      return {
+        ...prev,
+        level: nextLevel,
+        targetScore: getSlavichLevelTarget(nextLevel),
+        isWon: false,
+        canUndo: false,
+        campaignCompleted,
+      };
+    });
+  }, [state.bestScore, state.campaignCompleted, state.isLost, state.level]);
 
   const undo = useCallback(() => {
     const snapshot = previousMove.current;
@@ -126,21 +163,10 @@ export function useGame2048() {
   }, []);
 
   const restart = useCallback(() => {
-    resetTileIdCounter();
     rewardedMilestones.current.clear();
     setEarnedReward(null);
     previousMove.current = null;
-    setState(prev => ({
-      grid: initGrid(),
-      score: 0,
-      bestScore: prev.bestScore,
-      moveCount: 0,
-      lastScoreGained: 0,
-      isWon: false,
-      isLost: false,
-      continueMode: false,
-      canUndo: false,
-    }));
+    setState(prev => createRound(prev.level, prev.bestScore, prev.campaignCompleted));
   }, []);
 
   // Keyboard controls

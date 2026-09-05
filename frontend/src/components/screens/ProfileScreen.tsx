@@ -6,7 +6,7 @@ import { CurrencyDisplay } from '@/components/ui/CurrencyDisplay';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import { useGameContext } from '@/store/GameContext';
 import { getTermlinById, ELEMENT_COLORS } from '@/data/termliny';
-import { STAGE_LABELS, MOOD_LABELS, getMood } from '@/engine/engine-pet/petEngine';
+import { MOOD_LABELS, STAGE_LABELS, getMood, getPetLevel } from '@/engine/engine-pet/petEngine';
 import { getProductById } from '@/data/shopData';
 import { formatRewardDate, isRewardClaimRedeemed } from '@/features/rewards/rewardRules';
 import { GAME_NAMES } from '@/data/gameNames';
@@ -25,6 +25,7 @@ import {
   accountProgressOwner,
   loadProgressOwner,
 } from '@/store/storage';
+import { GAME_LEVEL_TOTAL, clampGameLevel, getNextPlayableLevel } from '@/data/gameProgression';
 
 const achievements = [
   { name: 'Новичок', desc: 'Пройти 1 уровень', icon: Trophy, color: '#6AABDA', check: (p: Stat) => p.completedLevels >= 1 },
@@ -88,9 +89,18 @@ export function ProfileScreen() {
 
   const character = getTermlinById(progress.selectedCharacter);
   const color = character ? (ELEMENT_COLORS[character.element] ?? '#BA9B4F') : '#BA9B4F';
-  const completedLevels = Object.values(progress.levels).filter(l => l.completed).length;
-  const totalStars = Object.values(progress.levels).reduce((sum, l) => sum + l.stars, 0);
-  const threeStarLevels = Object.values(progress.levels).filter(l => l.stars >= 3).length;
+  const match3Progress = Object.entries(progress.levels)
+    .filter(([id]) => Number(id) >= 1 && Number(id) <= GAME_LEVEL_TOTAL)
+    .map(([, value]) => value);
+  const completedLevels = match3Progress.filter(l => l.completed).length;
+  const totalStars = match3Progress.reduce((sum, l) => sum + l.stars, 0);
+  const threeStarLevels = match3Progress.filter(l => l.stars >= 3).length;
+  const match3Level = clampGameLevel(progress.currentLevel);
+  const slavichLevel = getNextPlayableLevel(progress.game2048LevelsCompleted);
+  const bubblesLevel = getNextPlayableLevel(progress.bubbleLevelsCompleted);
+  const petLevel = getPetLevel({
+    experience: progress.pet?.experience ?? progress.petDeparture?.experience ?? 0,
+  });
   const earnedCount = achievements.filter(a => a.check({
     completedLevels, totalStars, threeStarLevels,
     currency: progress.currency,
@@ -256,7 +266,7 @@ export function ProfileScreen() {
             {[
               { value: completedLevels, label: 'Уровни', icon: Target },
               { value: totalStars, label: 'Звёзды', icon: Star },
-              { value: progress.best2048Score, label: GAME_NAMES.game2048, icon: Grid3x3 },
+              { value: `${slavichLevel}/${GAME_LEVEL_TOTAL}`, label: GAME_NAMES.game2048, icon: Grid3x3 },
               { value: earnedCount, label: 'Ачивки', icon: Trophy },
             ].map((s, i) => (
               <motion.div
@@ -411,9 +421,9 @@ export function ProfileScreen() {
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-center">
                     <p className="text-white/90 text-sm font-medium">{GAME_NAMES.match3}</p>
-                    <p className="text-white/40 text-xs">{completedLevels} уровней</p>
+                    <p className="text-white/40 text-xs">Уровень {match3Level} из {GAME_LEVEL_TOTAL}</p>
                   </div>
-                  <ProgressBar current={completedLevels} max={100} color="#D4956A" className="mt-1.5" />
+                  <ProgressBar current={match3Level} max={GAME_LEVEL_TOTAL} color="#D4956A" className="mt-1.5" />
                 </div>
               </div>
 
@@ -425,9 +435,10 @@ export function ProfileScreen() {
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-center">
                     <p className="text-white/90 text-sm font-medium">{GAME_NAMES.game2048}</p>
-                    <p className="text-white/40 text-xs">Рекорд: {progress.best2048Score}</p>
+                    <p className="text-white/40 text-xs">Уровень {slavichLevel} из {GAME_LEVEL_TOTAL}</p>
                   </div>
-                  <ProgressBar current={Math.min(progress.best2048Score, 2048)} max={2048} color="#6AABDA" className="mt-1.5" />
+                  <ProgressBar current={slavichLevel} max={GAME_LEVEL_TOTAL} color="#6AABDA" className="mt-1.5" />
+                  <p className="mt-1 text-[10px] text-white/30">Рекорд: {progress.best2048Score}</p>
                 </div>
               </div>
 
@@ -439,9 +450,9 @@ export function ProfileScreen() {
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-center">
                     <p className="text-white/90 text-sm font-medium">{GAME_NAMES.bubbles}</p>
-                    <p className="text-white/40 text-xs">{progress.bubbleLevelsCompleted} уровней</p>
+                    <p className="text-white/40 text-xs">Уровень {bubblesLevel} из {GAME_LEVEL_TOTAL}</p>
                   </div>
-                  <ProgressBar current={progress.bubbleLevelsCompleted} max={20} color="#5DB879" className="mt-1.5" />
+                  <ProgressBar current={bubblesLevel} max={GAME_LEVEL_TOTAL} color="#5DB879" className="mt-1.5" />
                 </div>
               </div>
 
@@ -464,18 +475,12 @@ export function ProfileScreen() {
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-center">
                     <p className="text-white/90 text-sm font-medium">{GAME_NAMES.pet}</p>
-                    <p className="text-white/40 text-xs">
-                      {progress.pet ? `${STAGE_LABELS[progress.pet.stage]} - ${MOOD_LABELS[getMood(progress.pet)]}` : 'Нет питомца'}
-                    </p>
+                    <p className="text-white/40 text-xs">Уровень {petLevel} из {GAME_LEVEL_TOTAL}</p>
                   </div>
-                  {progress.pet && (
-                    <ProgressBar
-                      current={(progress.pet.hunger + progress.pet.happiness + progress.pet.energy + progress.pet.cleanliness) / 4}
-                      max={100}
-                      color="#9B7EC8"
-                      className="mt-1.5"
-                    />
-                  )}
+                  <ProgressBar current={petLevel} max={GAME_LEVEL_TOTAL} color="#9B7EC8" className="mt-1.5" />
+                  <p className="mt-1 text-[10px] text-white/30">
+                    {progress.pet ? `${STAGE_LABELS[progress.pet.stage]} · ${MOOD_LABELS[getMood(progress.pet)]}` : 'Термлин ещё не выбран'}
+                  </p>
                 </div>
               </div>
             </div>

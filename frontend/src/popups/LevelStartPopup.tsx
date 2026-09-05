@@ -4,6 +4,7 @@ import { ObjectiveDisplay } from '@/components/game/ObjectiveDisplay';
 import { LivesDisplay } from '@/components/ui/LivesDisplay';
 import { LIFE_PRICE, MAX_LIVES } from '@/store/lives';
 import type { LevelConfig } from '@/types/game';
+import { GAME_LEVEL_TOTAL } from '@/data/gameProgression';
 
 interface LevelStartPopupProps {
   open: boolean;
@@ -34,7 +35,7 @@ export function LevelStartPopup({
     <Modal open={open}>
       <div className="text-center space-y-4">
         <h2 className="font-heading text-2xl text-primary font-bold">{config.name}</h2>
-        <p className="text-white/50 text-sm">Уровень {config.id}</p>
+        <p className="text-white/50 text-sm">Уровень {config.id} из {GAME_LEVEL_TOTAL}</p>
 
         <div className="space-y-2">
           <p className="text-white/40 text-xs uppercase tracking-wider">Собери</p>

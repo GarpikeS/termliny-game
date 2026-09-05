@@ -14,6 +14,7 @@ import {
   getPetLevel,
   getPetLevelProgress,
   getStatWarning,
+  qualifiesPetLevelCompletion,
   renamePet,
   syncPetState,
   type PetAction,
@@ -39,10 +40,12 @@ export function usePet() {
     if (depletedStat) {
       petRef.current = null;
       departPet({
+        adoptionId: next.adoptionId,
         characterId: next.characterId,
         name: next.name,
         depletedStat,
         departedAt: Date.now(),
+        experience: next.experience,
       });
       return false;
     }
@@ -92,18 +95,31 @@ export function usePet() {
   }, [pet?.characterId]);
 
   const adopt = useCallback((characterId: string) => {
-    const next = createPet(characterId);
+    const retainedExperience = Number.isFinite(progress.petDeparture?.experience)
+      ? Math.max(0, Math.floor(progress.petDeparture?.experience ?? 0))
+      : 0;
+    const next = createPet(characterId, Date.now(), retainedExperience);
     petRef.current = next;
     updatePet(next);
-  }, [updatePet]);
+  }, [progress.petDeparture?.experience, updatePet]);
 
   const commit = useCallback((result: PetInteractionResult): PetInteractionResult => {
+    const previousPet = petRef.current;
+    const completedLevel = Boolean(
+      result.ok
+      && previousPet
+      && qualifiesPetLevelCompletion(previousPet, result.pet),
+    );
+    const persistResult = (nextPet: NonNullable<typeof pet>) => {
+      saveOrDepart(nextPet);
+      if (completedLevel) recordFourGameCompletion('pet');
+    };
     if (!result.ok || result.coins <= 0) {
-      saveOrDepart(result.pet);
+      persistResult(result.pet);
       return result;
     }
     if (getDepletedPetStat(result.pet)) {
-      saveOrDepart(result.pet);
+      persistResult(result.pet);
       return result;
     }
 
@@ -122,14 +138,14 @@ export function usePet() {
           : entry
       )),
     };
-    saveOrDepart(petWithActualReward);
+    persistResult(petWithActualReward);
     return {
       ...result,
       pet: petWithActualReward,
       coins: awarded,
       message: result.message.replace(/\+\d+ термокоинов/, rewardText),
     };
-  }, [awardGameCurrency, saveOrDepart]);
+  }, [awardGameCurrency, recordFourGameCompletion, saveOrDepart]);
 
   const doAction = useCallback((action: PetAction): PetInteractionResult | null => {
     const current = getActivePet();
@@ -140,10 +156,8 @@ export function usePet() {
   const doActivity = useCallback((activity: PetActivity): PetInteractionResult | null => {
     const current = getActivePet();
     if (!current) return null;
-    const result = commit(applyActivity(current, activity));
-    if (result.ok) recordFourGameCompletion('pet');
-    return result;
-  }, [commit, getActivePet, recordFourGameCompletion]);
+    return commit(applyActivity(current, activity));
+  }, [commit, getActivePet]);
 
   const takeDailyGift = useCallback((): PetInteractionResult | null => {
     const current = getActivePet();
@@ -163,10 +177,11 @@ export function usePet() {
     return commit(renamePet(current, name));
   }, [commit, getActivePet]);
 
+  const retainedExperience = pet?.experience ?? progress.petDeparture?.experience ?? 0;
   const mood: PetMood = pet ? getMood(pet) : 'happy';
   const warning = pet ? getStatWarning(pet) : null;
-  const level = pet ? getPetLevel(pet) : 1;
-  const levelProgress = pet ? getPetLevelProgress(pet) : { current: 0, max: 100 };
+  const level = getPetLevel({ experience: retainedExperience });
+  const levelProgress = getPetLevelProgress({ experience: retainedExperience });
 
   return {
     pet,

@@ -4,6 +4,7 @@ import { Droplets, Sparkles, Zap, Flame, Leaf, Mountain } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { CurrencyDisplay } from '@/components/ui/CurrencyDisplay';
 import { useGameContext } from '@/store/GameContext';
+import { GAME_LEVEL_TOTAL, clampGameLevel } from '@/data/gameProgression';
 
 export function MainMenu() {
   const navigate = useNavigate();
@@ -17,7 +18,9 @@ export function MainMenu() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="font-heading text-2xl font-bold text-primary tracking-[0.1em]">ТЕРМЛИНЫ</h1>
-            <p className="text-white/40 text-xs mt-0.5">Уровень {progress.currentLevel}</p>
+            <p className="text-white/40 text-xs mt-0.5">
+              Уровень {clampGameLevel(progress.currentLevel)} из {GAME_LEVEL_TOTAL}
+            </p>
           </div>
           <CurrencyDisplay amount={progress.currency} />
         </div>

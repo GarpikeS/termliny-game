@@ -1,5 +1,6 @@
 import type { PetDailyState, PetDiaryEntry, PetState, PetStatKey } from '../../types/game.ts';
 import { PET_DAILY_REWARD } from '../../data/economy.ts';
+import { GAME_LEVEL_TOTAL } from '../../data/gameProgression.ts';
 
 export type PetAction = 'feed' | 'play' | 'rest' | 'wash';
 export type PetActivity = 'tea' | 'herbs' | 'ritual';
@@ -185,8 +186,31 @@ function getDefaultName(characterId: string): string {
   return names[characterId] ?? 'Термлин';
 }
 
-export function createPet(characterId: string, now = Date.now()): PetState {
-  return {
+function createAdoptionId(characterId: string, now: number): string {
+  const randomPart = globalThis.crypto?.randomUUID?.()
+    ?? Math.random().toString(36).slice(2, 14);
+  return `pet-${characterId}-${now}-${randomPart}`.slice(0, 100);
+}
+
+function resolveAdoptionId(pet: PetState): string {
+  if (typeof pet.adoptionId === 'string' && pet.adoptionId.trim()) {
+    return pet.adoptionId.trim().slice(0, 100);
+  }
+  const adoptionEntry = Array.isArray(pet.diary)
+    ? pet.diary.find(entry => typeof entry?.id === 'string' && entry.id.startsWith('adopt-'))
+    : null;
+  if (adoptionEntry) return `legacy-${adoptionEntry.id}`.slice(0, 100);
+  return `legacy-${pet.characterId || 'yaromir'}`.slice(0, 100);
+}
+
+export function createPet(
+  characterId: string,
+  now = Date.now(),
+  retainedExperience = 0,
+  adoptionId = createAdoptionId(characterId, now),
+): PetState {
+  const pet: PetState = {
+    adoptionId,
     characterId,
     name: getDefaultName(characterId),
     hunger: 80,
@@ -198,7 +222,7 @@ export function createPet(characterId: string, now = Date.now()): PetState {
     lastUpdated: now,
     cooldowns: {},
     activityCooldowns: {},
-    experience: 0,
+    experience: Math.max(0, Math.floor(Number.isFinite(retainedExperience) ? retainedExperience : 0)),
     bond: 10,
     careStreak: 0,
     lastCareDate: null,
@@ -211,6 +235,7 @@ export function createPet(characterId: string, now = Date.now()): PetState {
       kind: 'growth',
     }],
   };
+  return { ...pet, stage: resolveStage(pet) };
 }
 
 export function normalizePetState(pet: PetState, now = Date.now()): PetState {
@@ -230,6 +255,7 @@ export function normalizePetState(pet: PetState, now = Date.now()): PetState {
   return {
     ...fallback,
     ...pet,
+    adoptionId: resolveAdoptionId(pet),
     name: typeof pet.name === 'string' && pet.name.trim() ? pet.name.trim().slice(0, 20) : fallback.name,
     hunger: clamp(Number.isFinite(pet.hunger) ? pet.hunger : fallback.hunger),
     happiness: clamp(Number.isFinite(pet.happiness) ? pet.happiness : fallback.happiness),
@@ -255,14 +281,22 @@ function getDecayRate(stat: keyof typeof BASE_DECAY, pet: PetState): number {
   return BASE_DECAY[stat] * STAGE_DECAY_MULT[pet.stage] * (1 - reduction);
 }
 
-export function getPetLevel(pet: PetState): number {
-  return Math.min(20, Math.floor(Math.max(0, pet.experience) / 100) + 1);
+export function getPetLevel(pet: Pick<PetState, 'experience'>): number {
+  return Math.min(GAME_LEVEL_TOTAL, Math.floor(Math.max(0, pet.experience) / 100) + 1);
 }
 
-export function getPetLevelProgress(pet: PetState): { current: number; max: number } {
+export function getPetLevelProgress(pet: Pick<PetState, 'experience'>): { current: number; max: number } {
   const level = getPetLevel(pet);
-  if (level >= 20) return { current: 100, max: 100 };
+  if (level >= GAME_LEVEL_TOTAL) return { current: 100, max: 100 };
   return { current: pet.experience % 100, max: 100 };
+}
+
+export function hasPetAdvancedLevel(previous: PetState, next: PetState): boolean {
+  return getPetLevel(next) > getPetLevel(previous);
+}
+
+export function qualifiesPetLevelCompletion(previous: PetState, next: PetState): boolean {
+  return hasPetAdvancedLevel(previous, next) || getPetLevel(previous) >= GAME_LEVEL_TOTAL;
 }
 
 function resolveStage(pet: PetState): PetState['stage'] {

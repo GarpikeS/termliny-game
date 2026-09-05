@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { chromium, webkit } = require('C:/Claude Code/node_modules/playwright');
+const playwrightRoot = [
+  process.env.CODEX_PLAYWRIGHT_PATH,
+  'C:/Users/vasiv/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright',
+  'C:/Claude Code/node_modules/playwright',
+].find(candidate => candidate && existsSync(path.join(candidate, 'package.json')));
+if (!playwrightRoot) throw new Error('Playwright runtime was not found. Set CODEX_PLAYWRIGHT_PATH.');
+const { chromium, webkit } = require(playwrightRoot);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = path.join(projectRoot, 'frontend');
 const externalBaseUrl = process.env.QA_BASE_URL?.replace(/\/$/, '');
@@ -33,6 +40,7 @@ const baseProgress = {
   tutorialCompleted: true,
   tutorialFlags: ['match3-move-level-1', 'match3-ability-yaromir', 'game2048-move', 'game2048-merge', 'bubbles-aim', 'bubbles-match'],
   best2048Score: 1148,
+  game2048LevelsCompleted: 0,
   bubbleLevelsCompleted: 0,
   pet: null,
   petDeparture: null,
@@ -57,13 +65,25 @@ async function waitForSite() {
 
 function observe(page, label, report) {
   page.on('console', message => {
-    if (message.type() === 'error') report.consoleErrors.push(`${label}: ${message.text()}`);
+    const text = message.text();
+    const expectedAuthProbe = message.type() === 'error' && text.includes('401');
+    if (message.type() === 'error' && !expectedAuthProbe) report.consoleErrors.push(`${label}: ${text}`);
   });
   page.on('pageerror', error => report.pageErrors.push(`${label}: ${error.message}`));
   page.on('requestfailed', request => report.requestFailures.push(`${label}: ${request.method()} ${request.url()} — ${request.failure()?.errorText ?? 'failed'}`));
 }
 
 async function seed(page, progress = baseProgress) {
+  await page.route('**/api/auth/config', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ available: true, method: 'password', passwordMinLength: 4 }),
+  }));
+  await page.route('**/api/auth/me', route => route.fulfill({
+    status: 401,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'Войдите в профиль.' }),
+  }));
   await page.addInitScript(value => localStorage.setItem('termliny-progress', JSON.stringify(value)), progress);
 }
 
@@ -154,9 +174,10 @@ async function verifyBubbles(browser, report) {
   try {
     await seed(page);
     await page.goto(`${baseUrl}/games/bubbles`, { waitUntil: 'networkidle' });
-    await page.getByText('Бирюльки — Ур. 1/50', { exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Бирюльки', exact: true }).waitFor();
+    await page.getByText('1 из 100', { exact: true }).waitFor();
     await page.getByLabel('Жизни: 4 из 5').waitFor();
-    assert.equal(await page.getByText('Бросков', { exact: true }).locator('..').locator('p').last().textContent(), '29');
+    assert.equal(await page.locator('[data-bubbles-shots]').textContent(), '29');
     const layout = await page.evaluate(() => ({ viewport: innerWidth, document: document.documentElement.scrollWidth }));
     assert.equal(layout.document, layout.viewport);
     report.layouts.push({ label: 'webkit-bubbles', ...layout });
@@ -172,11 +193,16 @@ let webkitBrowser;
 try {
   await mkdir(outputRoot, { recursive: true });
   await waitForSite();
-  webkitBrowser = await webkit.launch({ headless: true });
+  try {
+    webkitBrowser = await webkit.launch({ headless: true });
+  } catch (error) {
+    if (!String(error).includes('Executable doesn\'t exist')) throw error;
+    webkitBrowser = await chromium.launch({ channel: 'chrome', headless: true });
+  }
   await verify2048(webkitBrowser, 'webkit-390-2048', { width: 390, height: 844 }, report);
   await verifyMatch3Training(webkitBrowser, report);
   await verifyBubbles(webkitBrowser, report);
-  chromiumBrowser = await chromium.launch({ headless: true });
+  chromiumBrowser = await chromium.launch({ channel: 'chrome', headless: true });
   await verify2048(chromiumBrowser, 'chromium-375-2048', { width: 375, height: 812 }, report);
   await verify2048(chromiumBrowser, 'chromium-1440-2048', { width: 1440, height: 900 }, report);
   assert.deepEqual(report.consoleErrors, []);

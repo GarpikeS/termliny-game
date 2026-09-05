@@ -1,5 +1,6 @@
 import { TokenType, type LevelConfig, type Difficulty } from '../types/game.ts';
 import { STANDARD_WIN_REWARD } from './economy.ts';
+import { GAME_LEVEL_TOTAL } from './gameProgression.ts';
 
 const W = TokenType.Water;
 const L = TokenType.Leaf;
@@ -85,12 +86,12 @@ export const levels: LevelConfig[] = [
   ...generateBathhouse(7, 'Травяная сауна', 63, 10, [L, W, St, Wd, F, S], 'term-master'),
   ...generateBathhouse(8, 'Инфракрасная сауна', 73, 10, [F, St, W, S, L, Wd], 'ar-guide'),
   ...generateBathhouse(9, 'Соляная парная', 83, 14, [S, W, St, L, F, Wd], 'ai-concierge'),
-  ...generateBathhouse(10, 'Мультикаменная баня', 97, 20, [S, F, W, St, Wd, L], 'term-master'),
+  ...generateBathhouse(10, 'Мультикаменная баня', 97, GAME_LEVEL_TOTAL - 96, [S, F, W, St, Wd, L], 'term-master', 20),
 ];
 
 function generateBathhouse(
   bathhouseId: number, _name: string, startId: number, count: number,
-  types: TokenType[], characterId: string,
+  types: TokenType[], characterId: string, difficultySpan = count,
 ): LevelConfig[] {
   const levelNames: Record<number, string[]> = {
     6: ['Липовый цвет', 'Медовый нектар', 'Золотой сок', 'Душистый пар', 'Сладкий сон', 'Пчелиный рай', 'Летний полдень', 'Янтарный жар', 'Цветочный мёд', 'Липовое блаженство'],
@@ -111,7 +112,9 @@ function generateBathhouse(
 
   return names.map((n, i) => {
     const id = startId + i;
-    const progress = i / (count - 1); // 0 to 1
+    // The final bathhouse keeps the original 20-level difficulty curve even
+    // though the unified campaign ends at level 100 after its first 4 levels.
+    const progress = i / (Math.max(2, difficultySpan) - 1); // 0 to 1
     const tokenCount = Math.min(4 + Math.floor(progress * 3), 6);
     const usedTypes = types.slice(0, tokenCount);
 

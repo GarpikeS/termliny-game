@@ -23,6 +23,7 @@ const FOUR_GAME_CAMPAIGN_ID = 'four-games-v1';
 const FOUR_GAME_CHALLENGE_SOURCES = ['game2048', 'bubbles', 'pet', 'match3'];
 const DAILY_GAME_REWARD_LIMIT = 30;
 const DAILY_TOTAL_REWARD_LIMIT = 120;
+const GAME_LEVEL_TOTAL = 100;
 const DEFAULT_CITY = 'Москва';
 const DEFAULT_TIME_ZONE = 'Europe/Moscow';
 const CITY_TIMEZONES = {
@@ -30,6 +31,7 @@ const CITY_TIMEZONES = {
   Зеленогорск: 'Asia/Krasnoyarsk',
 };
 const CHARACTER_IDS = new Set(['yaromir', 'valkiriya', 'pereslav', 'kazimir', 'vedagor', 'milovan', 'lelya']);
+const PET_DEPLETED_STATS = new Set(['hunger', 'happiness', 'energy', 'cleanliness']);
 const PRODUCT_PRICES = {
   'ticket-vip': 5000,
   'merch-hat': 6000,
@@ -52,6 +54,7 @@ const DEFAULT_PROGRESS = Object.freeze({
   tutorialCompleted: false,
   tutorialFlags: [],
   best2048Score: 0,
+  game2048LevelsCompleted: 0,
   bubbleLevelsCompleted: 0,
   pet: null,
   petDeparture: null,
@@ -262,15 +265,50 @@ function normalizeFourGameChallenge(value, previousValue = null) {
   };
 }
 
+function normalizePetDeparture(value) {
+  const source = plainObject(value);
+  const adoptionId = cleanText(source.adoptionId, 100);
+  const characterId = cleanText(source.characterId, 40);
+  const name = cleanText(source.name, 40);
+  const depletedStat = cleanText(source.depletedStat, 20);
+  const departedAt = safeTimestamp(source.departedAt, null);
+  if (!CHARACTER_IDS.has(characterId) || !name || !PET_DEPLETED_STATS.has(depletedStat) || !departedAt) return null;
+  return {
+    ...(adoptionId ? { adoptionId } : {}),
+    characterId,
+    name,
+    depletedStat,
+    departedAt,
+    experience: safeInteger(source.experience, 0, 100_000_000, 0),
+  };
+}
+
+function getPetAdoptionId(value) {
+  const source = plainObject(value);
+  const explicitId = cleanText(source.adoptionId, 100);
+  if (explicitId) return explicitId;
+  const diary = Array.isArray(source.diary) ? source.diary : [];
+  const adoptionEntry = diary.find(entry => cleanText(plainObject(entry).id, 100).startsWith('adopt-'));
+  const legacyId = cleanText(plainObject(adoptionEntry).id, 100);
+  if (legacyId) return `legacy-${legacyId}`.slice(0, 100);
+  const characterId = cleanText(source.characterId, 40);
+  return characterId ? `legacy-${characterId}`.slice(0, 100) : null;
+}
+
+function isSamePetInstance(firstId, secondId, firstCharacterId, secondCharacterId) {
+  if (firstId || secondId) return Boolean(firstId && secondId && firstId === secondId);
+  return Boolean(firstCharacterId && firstCharacterId === secondCharacterId);
+}
+
 function mergeLevels(incomingValue, previousValue) {
   const incoming = plainObject(incomingValue);
   const previous = plainObject(previousValue);
   const merged = {};
   const levelIds = new Set([...Object.keys(previous), ...Object.keys(incoming)]);
-  for (const key of [...levelIds].slice(0, 100)) {
+  for (const key of [...levelIds].slice(0, GAME_LEVEL_TOTAL)) {
     if (!/^\d{1,3}$/.test(key)) continue;
     const id = Number(key);
-    if (id < 1 || id > 100) continue;
+    if (id < 1 || id > GAME_LEVEL_TOTAL) continue;
     const before = plainObject(previous[key]);
     const next = plainObject(incoming[key]);
     merged[id] = {
@@ -395,13 +433,103 @@ function sanitizeProgress(inputValue, options) {
 
   const incomingPet = plainObject(input.pet);
   const previousPet = plainObject(before.pet);
-  const pet = Object.keys(incomingPet).length > 0
-    && safeTimestamp(incomingPet.lastUpdated, 0) >= safeTimestamp(previousPet.lastUpdated, 0)
-    ? incomingPet
-    : (Object.keys(previousPet).length > 0 ? previousPet : null);
+  const previousPetDeparture = normalizePetDeparture(before.petDeparture);
+  const incomingPetDeparture = normalizePetDeparture(input.petDeparture);
+  const hasPreviousPet = Object.keys(previousPet).length > 0;
+  const hasIncomingPet = Object.keys(incomingPet).length > 0;
+  const previousPetAdoptionId = getPetAdoptionId(previousPet);
+  const incomingPetAdoptionId = getPetAdoptionId(incomingPet);
+  const incomingPetIsCurrent = hasPreviousPet && isSamePetInstance(
+    previousPetAdoptionId,
+    incomingPetAdoptionId,
+    cleanText(previousPet.characterId, 40),
+    cleanText(incomingPet.characterId, 40),
+  );
+  const incomingDepartureAdoptionId = incomingPetDeparture?.adoptionId ?? null;
+  const permitsLegacyDepartureFallback = !incomingDepartureAdoptionId
+    && (!previousPetAdoptionId || previousPetAdoptionId.startsWith('legacy-'));
+  const incomingDepartureMatchesCurrent = hasPreviousPet && Boolean(incomingPetDeparture) && isSamePetInstance(
+    permitsLegacyDepartureFallback ? null : previousPetAdoptionId,
+    incomingDepartureAdoptionId,
+    cleanText(previousPet.characterId, 40),
+    incomingPetDeparture?.characterId ?? '',
+  );
+  const incomingDepartureUpdatesPrevious = !hasPreviousPet && Boolean(previousPetDeparture) && Boolean(incomingPetDeparture)
+    && isSamePetInstance(
+      previousPetDeparture?.adoptionId ?? null,
+      incomingPetDeparture?.adoptionId ?? null,
+      previousPetDeparture?.characterId ?? '',
+      incomingPetDeparture?.characterId ?? '',
+    );
+  const incomingPetIsNewAdoption = !hasPreviousPet
+    && Boolean(previousPetDeparture)
+    && Boolean(incomingPetAdoptionId)
+    && incomingDepartureUpdatesPrevious
+    && (incomingPetDeparture?.departedAt ?? 0) >= (previousPetDeparture?.departedAt ?? 0)
+    && safeTimestamp(incomingPet.lastUpdated, 0) >= (incomingPetDeparture?.departedAt ?? 0)
+    && (previousPetDeparture?.adoptionId
+      ? incomingPetAdoptionId !== previousPetDeparture.adoptionId
+      : !incomingPetAdoptionId.startsWith('legacy-'));
+  const incomingDepartureIsInitial = !hasPreviousPet
+    && !previousPetDeparture
+    && Boolean(incomingPetDeparture);
+  const previousPetEventAt = Math.max(
+    safeTimestamp(previousPet.lastUpdated, 0),
+    previousPetDeparture?.departedAt ?? 0,
+  );
+  const incomingPetReplacesDeparted = hasPreviousPet
+    && hasIncomingPet
+    && incomingDepartureMatchesCurrent
+    && Boolean(incomingPetAdoptionId)
+    && incomingPetAdoptionId !== previousPetAdoptionId
+    && (incomingPetDeparture?.departedAt ?? 0) >= previousPetEventAt
+    && safeTimestamp(incomingPet.lastUpdated, 0) >= (incomingPetDeparture?.departedAt ?? 0);
+  const acceptsIncomingPet = hasIncomingPet
+    && safeTimestamp(incomingPet.lastUpdated, 0) >= previousPetEventAt
+    && (
+      !hasPreviousPet && !previousPetDeparture
+      || incomingPetIsCurrent
+      || incomingPetIsNewAdoption
+      || incomingPetReplacesDeparted
+    );
+  const acceptsIncomingDeparture = input.pet === null
+    && incomingPetDeparture
+    && incomingPetDeparture.departedAt >= previousPetEventAt
+    && (incomingDepartureMatchesCurrent || incomingDepartureUpdatesPrevious || incomingDepartureIsInitial);
+  const preservedPetExperience = Math.max(
+    safeInteger(previousPet.experience, 0, 100_000_000, 0),
+    previousPetDeparture?.experience ?? 0,
+    incomingPetReplacesDeparted ? (incomingPetDeparture?.experience ?? 0) : 0,
+  );
+  const pet = acceptsIncomingDeparture
+    ? null
+    : acceptsIncomingPet
+      ? {
+          ...incomingPet,
+          ...(incomingPetAdoptionId ? { adoptionId: incomingPetAdoptionId } : {}),
+          experience: Math.max(
+            preservedPetExperience,
+            safeInteger(incomingPet.experience, 0, 100_000_000, 0),
+          ),
+        }
+      : (Object.keys(previousPet).length > 0 ? previousPet : null);
+  const petDeparture = acceptsIncomingDeparture
+    ? {
+        ...incomingPetDeparture,
+        ...((incomingPetDeparture.adoptionId || previousPetAdoptionId)
+          ? { adoptionId: incomingPetDeparture.adoptionId || previousPetAdoptionId }
+          : {}),
+        experience: Math.max(preservedPetExperience, incomingPetDeparture.experience),
+      }
+    : acceptsIncomingPet
+      ? null
+      : previousPetDeparture;
 
   const progress = {
-    currentLevel: Math.max(safeInteger(before.currentLevel, 1, 101, 1), safeInteger(input.currentLevel, 1, 101, 1)),
+    currentLevel: Math.max(
+      safeInteger(before.currentLevel, 1, GAME_LEVEL_TOTAL + 1, 1),
+      safeInteger(input.currentLevel, 1, GAME_LEVEL_TOTAL + 1, 1),
+    ),
     levels: mergeLevels(input.levels, before.levels),
     currency,
     dailyGameRewards,
@@ -412,9 +540,16 @@ function sanitizeProgress(inputValue, options) {
     tutorialCompleted: before.tutorialCompleted === true || input.tutorialCompleted === true,
     tutorialFlags,
     best2048Score: Math.max(safeInteger(before.best2048Score, 0, 1_000_000_000, 0), safeInteger(input.best2048Score, 0, 1_000_000_000, 0)),
-    bubbleLevelsCompleted: Math.max(safeInteger(before.bubbleLevelsCompleted, 0, 50, 0), safeInteger(input.bubbleLevelsCompleted, 0, 50, 0)),
+    game2048LevelsCompleted: Math.max(
+      safeInteger(before.game2048LevelsCompleted, 0, GAME_LEVEL_TOTAL, 0),
+      safeInteger(input.game2048LevelsCompleted, 0, GAME_LEVEL_TOTAL, 0),
+    ),
+    bubbleLevelsCompleted: Math.max(
+      safeInteger(before.bubbleLevelsCompleted, 0, GAME_LEVEL_TOTAL, 0),
+      safeInteger(input.bubbleLevelsCompleted, 0, GAME_LEVEL_TOTAL, 0),
+    ),
     pet,
-    petDeparture: input.petDeparture && typeof input.petDeparture === 'object' ? input.petDeparture : (before.petDeparture ?? null),
+    petDeparture,
     unlockedCharacters,
     inventory,
     rewardClaims: validClaims.map(claim => publicClaim(claim, now)),

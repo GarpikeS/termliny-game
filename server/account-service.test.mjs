@@ -33,6 +33,7 @@ function baseProgress(date = '2026-08-15') {
     tutorialCompleted: true,
     tutorialFlags: ['match3:swap'],
     best2048Score: 1024,
+    game2048LevelsCompleted: 2,
     bubbleLevelsCompleted: 2,
     pet: null,
     petDeparture: null,
@@ -194,6 +195,7 @@ test('phone/password registration, session, progress sync, logout and cross-devi
     assert.equal(registered.account.city, 'Владивосток');
     assert.equal(registered.account.phoneMasked, '+7 ••• •••-45-67');
     assert.equal(registered.progress.currency, 181);
+    assert.equal(registered.progress.game2048LevelsCompleted, 2);
     assert.equal(registered.progress.dailyGameRewards.date, '2026-08-16');
     assert.deepEqual(registered.progress.fourGameChallenge, { version: 1, completedGames: [] });
     assert.equal(JSON.stringify(registered).includes(TEST_PASSWORD), false);
@@ -221,6 +223,8 @@ test('phone/password registration, session, progress sync, logout and cross-devi
 
     const tampered = baseProgress('2026-08-16');
     tampered.currency = 999_999;
+    tampered.game2048LevelsCompleted = 999;
+    tampered.bubbleLevelsCompleted = 999;
     tampered.dailyGameRewards.earned = { match3: 30, game2048: 30, bubbles: 30, pet: 30 };
     const firstSync = await fetch(`${origin}/api/account/progress`, {
       method: 'PUT',
@@ -228,7 +232,10 @@ test('phone/password registration, session, progress sync, logout and cross-devi
       body: JSON.stringify({ progress: tampered, expectedAccountId: registered.account.id }),
     });
     assert.equal(firstSync.status, 200);
-    assert.equal((await firstSync.json()).progress.currency, 301);
+    const firstSyncProgress = (await firstSync.json()).progress;
+    assert.equal(firstSyncProgress.currency, 301);
+    assert.equal(firstSyncProgress.game2048LevelsCompleted, 100);
+    assert.equal(firstSyncProgress.bubbleLevelsCompleted, 100);
 
     const repeatedSync = await fetch(`${origin}/api/account/progress`, {
       method: 'PUT',
@@ -236,6 +243,163 @@ test('phone/password registration, session, progress sync, logout and cross-devi
       body: JSON.stringify({ progress: tampered, expectedAccountId: registered.account.id }),
     });
     assert.equal((await repeatedSync.json()).progress.currency, 301);
+
+    const activePetProgress = {
+      ...firstSyncProgress,
+      pet: {
+        characterId: 'yaromir',
+        experience: 9_899,
+        lastUpdated: currentTime + 100,
+      },
+      petDeparture: null,
+    };
+    const activePetSync = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: firstSessionCookie }),
+      body: JSON.stringify({ progress: activePetProgress, expectedAccountId: registered.account.id }),
+    });
+    const activePetSaved = (await activePetSync.json()).progress;
+    assert.equal(activePetSaved.pet.experience, 9_899);
+    assert.equal(activePetSaved.pet.adoptionId, 'legacy-yaromir');
+    assert.equal(activePetSaved.petDeparture, null);
+
+    const departureProgress = {
+      ...activePetSaved,
+      pet: null,
+      petDeparture: {
+        characterId: 'yaromir',
+        name: 'Яромир',
+        depletedStat: 'hunger',
+        departedAt: currentTime + 200,
+        experience: 9_899,
+      },
+    };
+    const departureSync = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: firstSessionCookie }),
+      body: JSON.stringify({ progress: departureProgress, expectedAccountId: registered.account.id }),
+    });
+    const departureSaved = (await departureSync.json()).progress;
+    assert.equal(departureSaved.pet, null);
+    assert.equal(departureSaved.petDeparture.adoptionId, 'legacy-yaromir');
+    assert.equal(departureSaved.petDeparture.experience, 9_899);
+
+    const stalePetSync = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: firstSessionCookie }),
+      body: JSON.stringify({
+        expectedAccountId: registered.account.id,
+        progress: {
+          ...departureSaved,
+          pet: {
+            adoptionId: 'pet-unrelated-stale',
+            characterId: 'pereslav',
+            experience: 100,
+            lastUpdated: currentTime + 250,
+          },
+          petDeparture: null,
+        },
+      }),
+    });
+    assert.equal(stalePetSync.status, 200);
+    const stalePetIgnored = (await stalePetSync.json()).progress;
+    assert.equal(stalePetIgnored.pet, null);
+    assert.equal(stalePetIgnored.petDeparture.experience, 9_899);
+
+    const adoptedPetSync = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: firstSessionCookie }),
+      body: JSON.stringify({
+        expectedAccountId: registered.account.id,
+        progress: {
+          ...departureSaved,
+          pet: {
+            adoptionId: 'pet-valkiriya-second',
+            characterId: 'valkiriya',
+            experience: 9_899,
+            lastUpdated: currentTime + 300,
+          },
+          petDeparture: departureSaved.petDeparture,
+        },
+      }),
+    });
+    const adoptedPetSaved = (await adoptedPetSync.json()).progress;
+    assert.equal(adoptedPetSaved.pet.characterId, 'valkiriya');
+    assert.equal(adoptedPetSaved.petDeparture, null);
+
+    const staleExperienceSync = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: firstSessionCookie }),
+      body: JSON.stringify({
+        expectedAccountId: registered.account.id,
+        progress: {
+          ...adoptedPetSaved,
+          pet: {
+            ...adoptedPetSaved.pet,
+            experience: 100,
+            lastUpdated: currentTime + 400,
+          },
+        },
+      }),
+    });
+    assert.equal(staleExperienceSync.status, 200);
+    const staleExperienceIgnored = (await staleExperienceSync.json()).progress;
+    assert.equal(staleExperienceIgnored.pet.experience, 9_899);
+
+    const staleDepartureSync = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: firstSessionCookie }),
+      body: JSON.stringify({
+        expectedAccountId: registered.account.id,
+        progress: {
+          ...staleExperienceIgnored,
+          pet: null,
+          petDeparture: {
+            adoptionId: 'legacy-yaromir',
+            characterId: 'yaromir',
+            name: 'Яромир',
+            depletedStat: 'hunger',
+            departedAt: currentTime + 500,
+            experience: 100,
+          },
+        },
+      }),
+    });
+    assert.equal(staleDepartureSync.status, 200);
+    const staleDepartureIgnored = (await staleDepartureSync.json()).progress;
+    assert.equal(staleDepartureIgnored.pet.characterId, 'valkiriya');
+    assert.equal(staleDepartureIgnored.pet.experience, 9_899);
+    assert.equal(staleDepartureIgnored.petDeparture, null);
+
+    const atomicReplacementSync = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: firstSessionCookie }),
+      body: JSON.stringify({
+        expectedAccountId: registered.account.id,
+        progress: {
+          ...staleDepartureIgnored,
+          pet: {
+            adoptionId: 'pet-pereslav-third',
+            characterId: 'pereslav',
+            experience: 9_899,
+            lastUpdated: currentTime + 700,
+          },
+          petDeparture: {
+            adoptionId: 'pet-valkiriya-second',
+            characterId: 'valkiriya',
+            name: 'Валькирия',
+            depletedStat: 'cleanliness',
+            departedAt: currentTime + 600,
+            experience: 9_899,
+          },
+        },
+      }),
+    });
+    assert.equal(atomicReplacementSync.status, 200);
+    const atomicReplacementSaved = (await atomicReplacementSync.json()).progress;
+    assert.equal(atomicReplacementSaved.pet.characterId, 'pereslav');
+    assert.equal(atomicReplacementSaved.pet.experience, 9_899);
+    assert.equal(atomicReplacementSaved.petDeparture, null);
 
     const wrongAccountSync = await fetch(`${origin}/api/account/progress`, {
       method: 'PUT',
@@ -262,6 +426,93 @@ test('phone/password registration, session, progress sync, logout and cross-devi
     const loggedIn = await login.json();
     assert.equal(loggedIn.account.name, 'Анна');
     assert.equal(loggedIn.progress.currency, 301);
+  } finally {
+    await service.close();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('registration preserves a departed pet level from guest progress', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'termburg-account-pet-departure-'));
+  const currentTime = Date.UTC(2026, 7, 19, 12, 0, 0);
+  const service = await startTestService(tempRoot, () => currentTime);
+  const origin = `http://127.0.0.1:${service.port}`;
+  const progress = baseProgress('2026-08-19');
+  progress.petDeparture = {
+    characterId: 'yaromir',
+    name: 'Яромир',
+    depletedStat: 'energy',
+    departedAt: currentTime - 1_000,
+    experience: 9_899,
+  };
+
+  try {
+    const register = await fetch(`${origin}/api/auth/register`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        phone: '+7 999 555-44-33',
+        password: TEST_PASSWORD,
+        name: 'Гость',
+        city: 'Казань',
+        timeZone: 'Europe/Moscow',
+        consent: true,
+        consentVersion: 'account-2026-08-15',
+        deviceId: 'device-pet-departure-0001',
+        progress,
+      }),
+    });
+    assert.equal(register.status, 201);
+    const sessionCookie = cookieFrom(register);
+    const registered = await register.json();
+    assert.equal(registered.progress.pet, null);
+    assert.equal(registered.progress.petDeparture.characterId, 'yaromir');
+    assert.equal(registered.progress.petDeparture.experience, 9_899);
+
+    const staleLegacyPet = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: sessionCookie }),
+      body: JSON.stringify({
+        expectedAccountId: registered.account.id,
+        progress: {
+          ...registered.progress,
+          pet: {
+            adoptionId: 'legacy-yaromir',
+            characterId: 'yaromir',
+            experience: 100,
+            lastUpdated: currentTime + 100,
+          },
+          petDeparture: null,
+        },
+      }),
+    });
+    assert.equal(staleLegacyPet.status, 200);
+    const staleLegacyPetIgnored = (await staleLegacyPet.json()).progress;
+    assert.equal(staleLegacyPetIgnored.pet, null);
+    assert.equal(staleLegacyPetIgnored.petDeparture.experience, 9_899);
+
+    const currentAdoption = await fetch(`${origin}/api/account/progress`, {
+      method: 'PUT',
+      headers: authHeaders({ Cookie: sessionCookie }),
+      body: JSON.stringify({
+        expectedAccountId: registered.account.id,
+        progress: {
+          ...staleLegacyPetIgnored,
+          pet: {
+            adoptionId: 'pet-valkiriya-after-legacy-departure',
+            characterId: 'valkiriya',
+            experience: 9_899,
+            lastUpdated: currentTime + 200,
+          },
+          petDeparture: staleLegacyPetIgnored.petDeparture,
+        },
+      }),
+    });
+    assert.equal(currentAdoption.status, 200);
+    const currentAdoptionSaved = (await currentAdoption.json()).progress;
+    assert.equal(currentAdoptionSaved.pet.characterId, 'valkiriya');
+    assert.equal(currentAdoptionSaved.pet.experience, 9_899);
+    assert.equal(currentAdoptionSaved.petDeparture, null);
   } finally {
     await service.close();
     await rm(tempRoot, { recursive: true, force: true });

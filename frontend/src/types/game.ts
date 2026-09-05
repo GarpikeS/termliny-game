@@ -149,6 +149,7 @@ export interface RewardClaim {
 }
 
 export interface PetState {
+  adoptionId: string;
   characterId: string;
   name: string;
   hunger: number;
@@ -171,10 +172,12 @@ export interface PetState {
 export type PetStatKey = 'hunger' | 'happiness' | 'energy' | 'cleanliness';
 
 export interface PetDeparture {
+  adoptionId?: string;
   characterId: string;
   name: string;
   depletedStat: PetStatKey;
   departedAt: number;
+  experience?: number;
 }
 
 export interface PetDailyState {
@@ -216,6 +219,7 @@ export interface PlayerProgress {
   tutorialCompleted: boolean;
   tutorialFlags: string[];
   best2048Score: number;
+  game2048LevelsCompleted: number;
   bubbleLevelsCompleted: number;
   pet: PetState | null;
   petDeparture: PetDeparture | null;

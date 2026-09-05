@@ -266,10 +266,9 @@ export function TamagotchiScreen() {
           </div>
         </div>
         <GameStatusBar
+          level={level}
           metricLabel="Опыт"
-          metricValue={0}
-          secondaryLabel="Уровень"
-          secondaryValue="—"
+          metricValue={`${levelProgress.current}/${levelProgress.max}`}
           currency={progress.currency}
           className="bg-black/50 px-5 pb-2"
         />
@@ -348,7 +347,7 @@ export function TamagotchiScreen() {
           </button>
           <div className="min-w-0 text-center">
             <p className="font-heading text-sm font-bold text-primary tracking-wide truncate">{pet.name}</p>
-            <p className="text-white/45 text-[10px]">Ур. {level} · {STAGE_LABELS[pet.stage]}</p>
+            <p className="text-white/45 text-[10px]">{STAGE_LABELS[pet.stage]}</p>
           </div>
           <button
             type="button"
@@ -362,10 +361,9 @@ export function TamagotchiScreen() {
         </div>
       </header>
       <GameStatusBar
+        level={level}
         metricLabel="Опыт"
         metricValue={`${levelProgress.current}/${levelProgress.max}`}
-        secondaryLabel="Уровень"
-        secondaryValue={level}
         currency={progress.currency}
         className="bg-black/55 px-4 pb-2"
       />
