@@ -62,6 +62,7 @@ function progressSeed() {
     tutorialFlags: [
       'four-games-challenge-intro-v1',
       'four-games-portal-tour-v1',
+      'four-games-portal-tour-v2',
       'game2048-move',
       'game2048-merge',
       'bubbles-aim',
@@ -280,7 +281,9 @@ async function assertBottomNavLayout(page, route, expectedActiveLabel) {
     const items = [...document.querySelectorAll('.bottom-nav__item')].map(item => {
       const itemRect = item.getBoundingClientRect();
       const iconRect = item.querySelector('.bottom-nav__icon')?.getBoundingClientRect();
-      const labelRect = item.querySelector('[data-bottom-nav-label]')?.getBoundingClientRect();
+      const labelElement = item.querySelector('[data-bottom-nav-label]');
+      const labelRect = labelElement?.getBoundingClientRect();
+      const labelStyle = labelElement ? getComputedStyle(labelElement) : null;
       const indicatorRect = item.querySelector('[data-bottom-nav-active-indicator]')?.getBoundingClientRect();
       return {
         ariaLabel: item.getAttribute('aria-label'),
@@ -301,7 +304,15 @@ async function assertBottomNavLayout(page, route, expectedActiveLabel) {
           width: iconRect.width,
           height: iconRect.height,
         },
-        label: labelRect && { top: labelRect.top, bottom: labelRect.bottom },
+        label: labelRect && {
+          left: labelRect.left,
+          right: labelRect.right,
+          top: labelRect.top,
+          bottom: labelRect.bottom,
+          height: labelRect.height,
+          lineHeight: labelStyle ? Number.parseFloat(labelStyle.lineHeight) : 0,
+          whiteSpace: labelStyle?.whiteSpace ?? '',
+        },
         indicator: indicatorRect && {
           left: indicatorRect.left,
           right: indicatorRect.right,
@@ -334,6 +345,10 @@ async function assertBottomNavLayout(page, route, expectedActiveLabel) {
   assert.ok(featured.icon.left >= featured.item.left - 1, `${route}: schedule highlight must fit its tab`);
   assert.ok(featured.icon.right <= featured.item.right + 1, `${route}: schedule highlight must fit its tab`);
   assert.ok(featured.icon.bottom <= featured.label.top - 2, `${route}: schedule highlight must not overlap its label`);
+  assert.ok(featured.label.left >= featured.item.left - 1, `${route}: schedule label must fit its tab`);
+  assert.ok(featured.label.right <= featured.item.right + 1, `${route}: schedule label must fit its tab`);
+  assert.equal(featured.label.whiteSpace, 'nowrap', `${route}: schedule label must not wrap`);
+  assert.ok(featured.label.height <= featured.label.lineHeight + 1, `${route}: schedule label must remain on one line`);
 
   const activeItems = geometry.items.filter(item => item.ariaCurrent === 'page');
   assert.equal(activeItems.length, 1, `${route}: bottom nav must expose one active tab`);
@@ -468,7 +483,7 @@ try {
     await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
     await page.locator('.bottom-nav').waitFor();
     await page.evaluate(() => document.fonts?.ready);
-    await assertBottomNavLayout(page, '/bathhouses', 'Термбурги и расписание');
+    await assertBottomNavLayout(page, '/bathhouses', 'Расписание');
     await assertNoHorizontalOverflow(page);
     await page.screenshot({
       path: path.join(outputRoot, 'bathhouses-nav-390x844.png'),

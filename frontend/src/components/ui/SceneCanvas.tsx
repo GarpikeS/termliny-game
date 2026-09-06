@@ -12,6 +12,7 @@ interface SceneCanvasProps {
   fetchPriority?: 'high' | 'low' | 'auto';
   className?: string;
   imageClassName?: string;
+  onSceneReady?: () => void;
   children?: ReactNode;
 }
 
@@ -31,6 +32,7 @@ export function SceneCanvas({
   fetchPriority = 'auto',
   className,
   imageClassName,
+  onSceneReady,
   children,
 }: SceneCanvasProps) {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -91,6 +93,8 @@ export function SceneCanvas({
           fetchPriority={fetchPriority}
           decoding={fetchPriority === 'high' ? 'sync' : 'async'}
           draggable={false}
+          onLoad={onSceneReady}
+          onError={onSceneReady}
         />
         {children}
       </div>

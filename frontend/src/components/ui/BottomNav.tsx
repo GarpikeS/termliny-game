@@ -15,7 +15,7 @@ interface BottomNavTab {
 
 const tabs: readonly BottomNavTab[] = [
   { path: '/games', icon: Gamepad2, label: 'Игры' },
-  { path: '/bathhouses', icon: CalendarClock, label: 'Термбурги', ariaLabel: 'Термбурги и расписание', featured: true },
+  { path: '/bathhouses', icon: CalendarClock, label: 'Расписание', featured: true },
   { path: '/shop', icon: Wallet, label: 'Кошелёк', ariaLabel: 'Кошелёк и магазин', cartBadge: true, wallet: true },
   { path: '/collection', icon: Users, label: 'Термлины' },
   { path: '/profile', icon: User, label: 'Профиль' },
@@ -85,7 +85,7 @@ export function BottomNav() {
                   </span>
                 )}
               </span>
-              <span className="text-[10px] font-medium" data-bottom-nav-label>{tab.label}</span>
+              <span className="whitespace-nowrap text-[10px] font-medium" data-bottom-nav-label>{tab.label}</span>
               {active && (
                 <div className="absolute -bottom-1 w-1 h-1 bg-primary rounded-full" data-bottom-nav-active-indicator />
               )}

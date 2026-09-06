@@ -171,17 +171,55 @@ async function assertNoHorizontalOverflow(page) {
 }
 
 async function getPortalTourVisualState(page) {
-  return page.locator('[data-portal-sequence]').evaluateAll(elements => elements.map(element => {
-    const style = getComputedStyle(element, '::before');
-    const matrix = style.transform === 'none' ? null : new DOMMatrixReadOnly(style.transform);
-    return {
-      animationName: style.animationName,
-      animationIterationCount: style.animationIterationCount,
-      opacity: Number(style.opacity),
-      scaleX: matrix?.a ?? 1,
-      scaleY: matrix?.d ?? 1,
-    };
-  }));
+  return page.locator('[data-portal-sequence]').evaluateAll(elements => {
+    const canvasRect = document.querySelector('.scene-canvas')?.getBoundingClientRect();
+    return elements.map(element => {
+      const style = getComputedStyle(element, '::before');
+      const matrix = style.transform === 'none' ? null : new DOMMatrixReadOnly(style.transform);
+      const rect = element.getBoundingClientRect();
+      return {
+        sequence: Number(element.getAttribute('data-portal-sequence')),
+        active: element.getAttribute('data-portal-active') === 'true',
+        animationName: style.animationName,
+        animationIterationCount: style.animationIterationCount,
+        backgroundImage: style.backgroundImage,
+        borderWidth: Number.parseFloat(style.borderTopWidth),
+        opacity: Number(style.opacity),
+        scaleX: matrix?.a ?? 1,
+        scaleY: matrix?.d ?? 1,
+        hitArea: { width: rect.width, height: rect.height },
+        relative: canvasRect && {
+          centerX: ((rect.left + rect.width / 2 - canvasRect.left) / canvasRect.width) * 100,
+          centerY: ((rect.top + rect.height / 2 - canvasRect.top) / canvasRect.height) * 100,
+          width: (rect.width / canvasRect.width) * 100,
+          height: (rect.height / canvasRect.height) * 100,
+        },
+      };
+    });
+  });
+}
+
+function assertPortalContourGeometry(states) {
+  const expected = [
+    { centerX: 29.4, centerY: 53.2, width: 25.3, height: 16.8 },
+    { centerX: 71.6, centerY: 53.5, width: 25.3, height: 16.5 },
+    { centerX: 29.4, centerY: 76, width: 25.3, height: 16.5 },
+    { centerX: 72.1, centerY: 76.1, width: 24.8, height: 16.1 },
+  ];
+
+  for (const [index, state] of states.entries()) {
+    const target = expected[index];
+    assert.ok(state.relative, `portal ${index + 1}: contour geometry must exist`);
+    for (const property of ['centerX', 'centerY', 'width', 'height']) {
+      assert.ok(
+        Math.abs(state.relative[property] - target[property]) <= 0.35,
+        `portal ${index + 1}: ${property} must trace the measured frame`,
+      );
+    }
+    assert.ok(state.hitArea.width >= 44 && state.hitArea.height >= 44, `portal ${index + 1}: touch target must remain at least 44×44px`);
+    assert.equal(state.backgroundImage, 'none', `portal ${index + 1}: contour must not use a wide radial fill`);
+    assert.ok(state.borderWidth >= 1 && state.borderWidth <= 2, `portal ${index + 1}: contour line must stay thin`);
+  }
 }
 
 async function assertPortalTourSettled(page, message) {
@@ -209,21 +247,65 @@ try {
 
   {
     const { context, page, runtimeErrors } = await createScenario(browser, {
-      progress: baseProgress(),
+      progress: baseProgress({ tutorialFlags: ['four-games-portal-tour-v1'] }),
     });
-    const startedAt = Date.now();
     await page.goto(`${baseUrl}/games`, { waitUntil: 'domcontentloaded' });
     await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
     assert.equal(await page.locator('[data-portal-sequence]').count(), 4);
-    assert.equal(await page.locator('[data-portal-tour]').getAttribute('data-portal-tour'), 'active', 'first visit must run the portal tour');
-    const activeTourStates = await getPortalTourVisualState(page);
-    assert.ok(activeTourStates.every(state => state.animationName === 'game-hub-portal-invite'));
-    assert.ok(activeTourStates.every(state => state.animationIterationCount === '1'), 'each portal must pulse exactly once');
+    await page.locator('[data-portal-sequence="1"][data-portal-active="true"]').waitFor({ timeout: 3_000 });
+    assert.equal(await page.locator('[data-portal-tour]').getAttribute('data-portal-tour'), 'active', 'v2 visit must run the portal tour after the scene loads');
+    let activeTourStates = await getPortalTourVisualState(page);
+    assertPortalContourGeometry(activeTourStates);
+    assert.deepEqual(activeTourStates.filter(state => state.active).map(state => state.sequence), [1]);
+    assert.equal(activeTourStates[0].animationName, 'game-hub-portal-invite');
+    assert.equal(activeTourStates[0].animationIterationCount, '1', 'the active portal must blink once per turn');
+    assert.ok(activeTourStates.slice(1).every(state => state.animationName === 'none'), 'only one portal may blink at a time');
     assert.equal(await page.locator('[data-four-game-challenge]').count(), 0, 'challenge must wait for portal tour');
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.locator('[data-portal-tour="paused"]').waitFor();
+    await page.waitForTimeout(1_000);
+    assert.equal(await page.locator('[data-portal-sequence="1"][data-portal-active="true"]').count(), 1, 'hidden page must pause the current contour');
+    const pausedStates = await getPortalTourVisualState(page);
+    assert.ok(pausedStates.every(state => state.animationName === 'none'), 'hidden page must not consume portal animations');
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.locator('[data-portal-tour="active"]').waitFor();
+
+    await page.locator('[data-portal-sequence="2"][data-portal-active="true"]').waitFor({ timeout: 2_000 });
+    const interruptedFlags = await page.evaluate(() => JSON.parse(localStorage.getItem('termliny-progress') || '{}').tutorialFlags);
+    assert.ok(!interruptedFlags.includes('four-games-portal-tour-v2'), 'interrupted tour must not be persisted before the fourth blink');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const restartedAt = Date.now();
+    await page.locator('[data-portal-sequence="1"][data-portal-active="true"]').waitFor({ timeout: 3_000 });
+
+    for (let sequence = 1; sequence <= 4; sequence += 1) {
+      const activePortal = page.locator(`[data-portal-sequence="${sequence}"][data-portal-active="true"]`);
+      await activePortal.waitFor({ timeout: 2_000 });
+      activeTourStates = await getPortalTourVisualState(page);
+      assert.deepEqual(activeTourStates.filter(state => state.active).map(state => state.sequence), [sequence], `portal ${sequence} must blink alone and in order`);
+      assert.equal(activeTourStates[sequence - 1].animationName, 'game-hub-portal-invite');
+      assert.equal(activeTourStates[sequence - 1].animationIterationCount, '1');
+      assert.ok(activeTourStates.filter(state => !state.active).every(state => state.animationName === 'none'), `portal ${sequence}: neighbouring contours must stay idle`);
+      const flagsBeforeCompletion = await page.evaluate(() => JSON.parse(localStorage.getItem('termliny-progress') || '{}').tutorialFlags);
+      assert.ok(!flagsBeforeCompletion.includes('four-games-portal-tour-v2'), `portal ${sequence}: tour flag must wait for the full sequence`);
+      if (sequence === 4) {
+        await page.waitForTimeout(450);
+        await page.screenshot({ path: path.join(outputRoot, 'portal-contour-horovod-390x844.png'), fullPage: true });
+      }
+      await activePortal.waitFor({ state: 'detached', timeout: 2_000 });
+    }
+
     const challenge = page.locator('[data-four-game-challenge]');
     await challenge.waitFor({ timeout: 8_500 });
-    const revealDelay = Date.now() - startedAt;
-    assert.ok(revealDelay >= 3_900, `challenge appeared too early (${revealDelay}ms)`);
+    const revealDelay = Date.now() - restartedAt;
+    assert.ok(revealDelay >= 3_000, `challenge appeared before all four blinks (${revealDelay}ms)`);
+    assert.ok(revealDelay < 7_000, `challenge appeared too late (${revealDelay}ms)`);
     assert.equal(await challenge.getAttribute('data-four-game-challenge-state'), 'intro');
     await page.getByText('Выиграй бесплатный час в Термбурге', { exact: true }).waitFor();
     await page.getByText('Пройди первый этап в каждой из 4 игр. Первый час — за 4 игры и 0 термокоинов. Монеты останутся в кошельке.', { exact: true }).waitFor();
@@ -250,7 +332,7 @@ try {
     assert.equal(await page.locator('[data-portal-sequence]:disabled, .game-hub__house:disabled').count(), 0, 'scene controls must return after the card is collapsed');
     const storedFlags = await page.evaluate(() => JSON.parse(localStorage.getItem('termliny-progress') || '{}').tutorialFlags);
     assert.ok(storedFlags.includes('four-games-challenge-intro-v1'));
-    assert.ok(storedFlags.includes('four-games-portal-tour-v1'), 'completed portal tour must be persisted');
+    assert.ok(storedFlags.includes('four-games-portal-tour-v2'), 'completed portal tour must be persisted');
     await page.locator('[data-portal-sequence="1"]').click();
     await page.waitForURL('**/games/2048');
     await page.goBack({ waitUntil: 'domcontentloaded' });
@@ -261,6 +343,27 @@ try {
     await page.locator('[data-four-game-challenge-state="compact"]').waitFor({ timeout: 1_500 });
     await assertPortalTourSettled(page, 'after reloading the hub');
     assert.deepEqual(runtimeErrors, []);
+    await context.close();
+  }
+
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 430, height: 932 },
+  ]) {
+    const { context, page, runtimeErrors } = await createScenario(browser, {
+      progress: baseProgress({ tutorialFlags: ['four-games-portal-tour-v1'] }),
+      viewport,
+    });
+    await page.goto(`${baseUrl}/games`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
+    await page.locator('[data-portal-sequence="1"][data-portal-active="true"]').waitFor({ timeout: 3_000 });
+    assertPortalContourGeometry(await getPortalTourVisualState(page));
+    await page.waitForTimeout(450);
+    await page.screenshot({
+      path: path.join(outputRoot, `portal-contour-${viewport.width}x${viewport.height}.png`),
+      fullPage: true,
+    });
+    assert.deepEqual(runtimeErrors, [], `portal contour ${viewport.width}x${viewport.height}`);
     await context.close();
   }
 
