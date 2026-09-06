@@ -17,7 +17,7 @@ import {
 const CHALLENGE_INTRO_FLAG = 'four-games-challenge-intro-v1';
 const CHALLENGE_COMPLETE_FLAG = 'four-games-challenge-complete-v1';
 const PORTAL_TOUR_FLAG = 'four-games-portal-tour-v2';
-const PORTAL_PULSE_FALLBACK_MS = 1_050;
+const PORTAL_PULSE_FALLBACK_MS = 1_300;
 const REDUCED_MOTION_REVEAL_DELAY_MS = 200;
 
 // Positions measured from 894x1760 source image → % of image
@@ -41,7 +41,8 @@ export function GameHub() {
   const completionSeen = progress.tutorialFlags.includes(CHALLENGE_COMPLETE_FLAG);
   const portalTourSeen = progress.tutorialFlags.includes(PORTAL_TOUR_FLAG);
   const hasChallengeClaim = progress.rewardClaims.some(claim => claim.campaignId === FOUR_GAME_CHALLENGE_ID);
-  const portalTourStartedRef = useRef(false);
+  const portalLoopStartedRef = useRef(false);
+  const firstPortalCycleCompletedRef = useRef(portalTourSeen);
   const [sceneReady, setSceneReady] = useState(false);
   const [pageVisible, setPageVisible] = useState(() => (
     typeof document === 'undefined' || document.visibilityState === 'visible'
@@ -51,7 +52,7 @@ export function GameHub() {
   const [manuallyExpanded, setManuallyExpanded] = useState(false);
   const [introDismissed, setIntroDismissed] = useState(false);
   const [completionDismissed, setCompletionDismissed] = useState(false);
-  const portalTourPlaying = activePortalIndex !== null && !reducedMotion && pageVisible;
+  const portalLoopPlaying = activePortalIndex !== null && !reducedMotion && pageVisible;
   const autoIntroExpanded = introReady && !introSeen && !challengeComplete && !introDismissed;
   const autoCompletionExpanded = challengeComplete && !completionSeen && !completionDismissed;
   const challengeVisible = !hasChallengeClaim && (introReady || introSeen || challengeComplete);
@@ -68,29 +69,25 @@ export function GameHub() {
     if (
       reducedMotion
       || !sceneReady
-      || portalTourSeen
-      || challengeComplete
-      || hasChallengeClaim
       || !pageVisible
-      || portalTourStartedRef.current
+      || portalLoopStartedRef.current
     ) return;
 
-    portalTourStartedRef.current = true;
+    portalLoopStartedRef.current = true;
     setActivePortalIndex(0);
-  }, [challengeComplete, hasChallengeClaim, pageVisible, portalTourSeen, reducedMotion, sceneReady]);
+  }, [pageVisible, reducedMotion, sceneReady]);
 
   useEffect(() => {
-    if (!reducedMotion || portalTourSeen || challengeComplete || hasChallengeClaim || portalTourStartedRef.current) return;
+    if (!reducedMotion || firstPortalCycleCompletedRef.current || challengeComplete || hasChallengeClaim) return;
 
-    portalTourStartedRef.current = true;
     const timer = window.setTimeout(() => {
-      setActivePortalIndex(null);
+      firstPortalCycleCompletedRef.current = true;
       markTutorialSeen(PORTAL_TOUR_FLAG);
       setIntroReady(true);
     }, REDUCED_MOTION_REVEAL_DELAY_MS);
 
     return () => window.clearTimeout(timer);
-  }, [challengeComplete, hasChallengeClaim, markTutorialSeen, portalTourSeen, reducedMotion]);
+  }, [challengeComplete, hasChallengeClaim, markTutorialSeen, reducedMotion]);
 
   const finishPortalPulse = useCallback((index: number) => {
     if (activePortalIndex !== index) return;
@@ -99,19 +96,22 @@ export function GameHub() {
       return;
     }
 
-    setActivePortalIndex(null);
-    markTutorialSeen(PORTAL_TOUR_FLAG);
-    setIntroReady(true);
+    if (!firstPortalCycleCompletedRef.current) {
+      firstPortalCycleCompletedRef.current = true;
+      markTutorialSeen(PORTAL_TOUR_FLAG);
+      setIntroReady(true);
+    }
+    setActivePortalIndex(0);
   }, [activePortalIndex, markTutorialSeen]);
 
   useEffect(() => {
-    if (!portalTourPlaying || activePortalIndex === null) return;
+    if (!portalLoopPlaying || activePortalIndex === null) return;
     const timer = window.setTimeout(
       () => finishPortalPulse(activePortalIndex),
       PORTAL_PULSE_FALLBACK_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [activePortalIndex, finishPortalPulse, portalTourPlaying]);
+  }, [activePortalIndex, finishPortalPulse, portalLoopPlaying]);
 
   const dismissChallenge = () => {
     markTutorialSeen(challengeComplete ? CHALLENGE_COMPLETE_FLAG : CHALLENGE_INTRO_FLAG);
@@ -132,8 +132,8 @@ export function GameHub() {
 
   return (
     <div
-      className={`game-hub h-full relative bg-[#080c08] overflow-hidden${portalTourPlaying ? ' game-hub--portal-tour' : ''}`}
-      data-portal-tour={activePortalIndex === null ? 'idle' : portalTourPlaying ? 'active' : 'paused'}
+      className={`game-hub h-full relative bg-[#080c08] overflow-hidden${portalLoopPlaying ? ' game-hub--portal-tour' : ''}`}
+      data-portal-tour={activePortalIndex === null ? 'idle' : portalLoopPlaying ? 'active' : 'paused'}
     >
       <SceneCanvas
         src="/images/ui/app-bg-extended-games-v3.webp"

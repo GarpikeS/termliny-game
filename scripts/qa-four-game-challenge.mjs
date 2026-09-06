@@ -184,6 +184,9 @@ async function getPortalTourVisualState(page) {
         animationIterationCount: style.animationIterationCount,
         backgroundImage: style.backgroundImage,
         borderWidth: Number.parseFloat(style.borderTopWidth),
+        boxShadow: style.boxShadow,
+        filter: style.filter,
+        inset: style.inset,
         opacity: Number(style.opacity),
         scaleX: matrix?.a ?? 1,
         scaleY: matrix?.d ?? 1,
@@ -217,17 +220,25 @@ function assertPortalContourGeometry(states) {
       );
     }
     assert.ok(state.hitArea.width >= 44 && state.hitArea.height >= 44, `portal ${index + 1}: touch target must remain at least 44×44px`);
-    assert.equal(state.backgroundImage, 'none', `portal ${index + 1}: contour must not use a wide radial fill`);
-    assert.ok(state.borderWidth >= 1 && state.borderWidth <= 2, `portal ${index + 1}: contour line must stay thin`);
+    assert.equal(state.backgroundImage, 'none', `portal ${index + 1}: glow must not use a wide radial fill`);
+    assert.equal(state.borderWidth, 0, `portal ${index + 1}: glow must not draw a hard contour line`);
+    assert.ok(!state.inset.includes('-'), `portal ${index + 1}: glow must stay close to the portal frame`);
+    const blurRadius = Number.parseFloat(state.filter.match(/blur\(([^p]+)px\)/)?.[1] ?? '0');
+    assert.ok(blurRadius >= 2 && blurRadius <= 3.5, `portal ${index + 1}: contour must use a soft controlled blur`);
+    const shadowLengths = [...state.boxShadow.matchAll(/([\d.]+)px/g)].map(match => Number(match[1]));
+    assert.ok(shadowLengths.length > 0 && Math.max(...shadowLengths) <= 10, `portal ${index + 1}: glow must not expand into a wide field`);
   }
 }
 
-async function assertPortalTourSettled(page, message) {
-  assert.equal(await page.locator('[data-portal-tour]').getAttribute('data-portal-tour'), 'idle', `${message}: tour must be idle`);
+async function assertPortalLoopRunning(page, message) {
+  await page.locator('[data-portal-sequence][data-portal-active="true"]').waitFor({ timeout: 3_000 });
+  assert.equal(await page.locator('[data-portal-tour]').getAttribute('data-portal-tour'), 'active', `${message}: portal loop must stay active`);
   const states = await getPortalTourVisualState(page);
-  assert.ok(states.every(state => state.animationName === 'none'), `${message}: portal animation must be removed`);
-  assert.ok(states.every(state => state.opacity === 0), `${message}: portal glow must be transparent`);
-  assert.ok(states.every(state => Math.abs(state.scaleX - 1) < 0.001 && Math.abs(state.scaleY - 1) < 0.001), `${message}: portal scale must return to 1`);
+  const activeStates = states.filter(state => state.active);
+  assert.equal(activeStates.length, 1, `${message}: exactly one portal must glow at a time`);
+  assert.equal(activeStates[0].animationName, 'game-hub-portal-invite', `${message}: active portal must animate`);
+  assert.ok(states.filter(state => !state.active).every(state => state.animationName === 'none'), `${message}: inactive portals must stay quiet`);
+  assert.ok(states.every(state => Math.abs(state.scaleX - 1) < 0.001 && Math.abs(state.scaleY - 1) < 0.001), `${message}: glow must not resize portals`);
 }
 
 async function closePreview() {
@@ -253,14 +264,14 @@ try {
     await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
     assert.equal(await page.locator('[data-portal-sequence]').count(), 4);
     await page.locator('[data-portal-sequence="1"][data-portal-active="true"]').waitFor({ timeout: 3_000 });
-    assert.equal(await page.locator('[data-portal-tour]').getAttribute('data-portal-tour'), 'active', 'v2 visit must run the portal tour after the scene loads');
+    assert.equal(await page.locator('[data-portal-tour]').getAttribute('data-portal-tour'), 'active', 'portal loop must start after the scene loads');
     let activeTourStates = await getPortalTourVisualState(page);
     assertPortalContourGeometry(activeTourStates);
     assert.deepEqual(activeTourStates.filter(state => state.active).map(state => state.sequence), [1]);
     assert.equal(activeTourStates[0].animationName, 'game-hub-portal-invite');
     assert.equal(activeTourStates[0].animationIterationCount, '1', 'the active portal must blink once per turn');
     assert.ok(activeTourStates.slice(1).every(state => state.animationName === 'none'), 'only one portal may blink at a time');
-    assert.equal(await page.locator('[data-four-game-challenge]').count(), 0, 'challenge must wait for portal tour');
+    assert.equal(await page.locator('[data-four-game-challenge]').count(), 0, 'challenge must wait for the first portal cycle');
 
     await page.evaluate(() => {
       Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
@@ -300,6 +311,7 @@ try {
       }
       await activePortal.waitFor({ state: 'detached', timeout: 2_000 });
     }
+    await page.locator('[data-portal-sequence="1"][data-portal-active="true"]').waitFor({ timeout: 2_000 });
 
     const challenge = page.locator('[data-four-game-challenge]');
     await challenge.waitFor({ timeout: 8_500 });
@@ -321,7 +333,7 @@ try {
     assert.equal(await challenge.getByText('0 из 4', { exact: true }).count(), 1);
     const attentionIterations = await challenge.evaluate(element => getComputedStyle(element, '::before').animationIterationCount);
     assert.equal(attentionIterations, '2');
-    await assertPortalTourSettled(page, 'after the first tour');
+    await assertPortalLoopRunning(page, 'after the first cycle');
     await assertNoHorizontalOverflow(page);
     await page.waitForTimeout(350);
     await page.screenshot({ path: path.join(outputRoot, 'intro-390x844.png'), fullPage: true });
@@ -332,16 +344,16 @@ try {
     assert.equal(await page.locator('[data-portal-sequence]:disabled, .game-hub__house:disabled').count(), 0, 'scene controls must return after the card is collapsed');
     const storedFlags = await page.evaluate(() => JSON.parse(localStorage.getItem('termliny-progress') || '{}').tutorialFlags);
     assert.ok(storedFlags.includes('four-games-challenge-intro-v1'));
-    assert.ok(storedFlags.includes('four-games-portal-tour-v2'), 'completed portal tour must be persisted');
+    assert.ok(storedFlags.includes('four-games-portal-tour-v2'), 'completed first portal cycle must be persisted');
     await page.locator('[data-portal-sequence="1"]').click();
     await page.waitForURL('**/games/2048');
     await page.goBack({ waitUntil: 'domcontentloaded' });
     await page.locator('[data-four-game-challenge-state="compact"]').waitFor({ timeout: 1_500 });
     assert.equal(await page.locator('[data-four-game-challenge-state="intro"]').count(), 0);
-    await assertPortalTourSettled(page, 'after returning to the hub');
+    await assertPortalLoopRunning(page, 'after returning to the hub');
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.locator('[data-four-game-challenge-state="compact"]').waitFor({ timeout: 1_500 });
-    await assertPortalTourSettled(page, 'after reloading the hub');
+    await assertPortalLoopRunning(page, 'after reloading the hub');
     assert.deepEqual(runtimeErrors, []);
     await context.close();
   }
@@ -395,6 +407,7 @@ try {
     await page.goto(`${baseUrl}/games`, { waitUntil: 'domcontentloaded' });
     const complete = page.locator('[data-four-game-challenge-state="complete"]');
     await complete.waitFor();
+    await assertPortalLoopRunning(page, 'completed challenge');
     await page.getByText('Бесплатный час разблокирован', { exact: true }).waitFor();
     const targets = await complete.locator('[data-four-game-dismiss], [data-four-game-start]').evaluateAll(elements => (
       elements.map(element => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height }))
@@ -449,6 +462,7 @@ try {
     await page.locator('[data-termburg-app-ready]').waitFor({ state: 'attached' });
     await page.waitForTimeout(350);
     assert.equal(await page.locator('[data-four-game-challenge]').count(), 0, 'claimed campaign must stay hidden');
+    await assertPortalLoopRunning(page, 'claimed challenge');
     assert.deepEqual(runtimeErrors, []);
     await context.close();
   }
@@ -1082,11 +1096,17 @@ try {
     await challenge.waitFor({ timeout: 1_500 });
     assert.ok(Date.now() - startedAt < 1_500, 'reduced-motion reveal should be prompt');
     assert.equal(await page.locator('[data-portal-tour]').getAttribute('data-portal-tour'), 'idle', 'reduced motion must skip the portal tour');
-    const animations = await page.locator('[data-portal-sequence="1"]').evaluate(element => ({
-      portal: getComputedStyle(element, '::before').animationName,
+    const animations = await page.locator('[data-portal-sequence]').evaluateAll(elements => ({
+      portals: elements.map(element => ({
+        animationName: getComputedStyle(element, '::before').animationName,
+        filter: getComputedStyle(element, '::before').filter,
+        opacity: Number(getComputedStyle(element, '::before').opacity),
+      })),
       challenge: getComputedStyle(document.querySelector('[data-four-game-challenge]'), '::before').animationName,
     }));
-    assert.equal(animations.portal, 'none');
+    assert.ok(animations.portals.every(portal => portal.animationName === 'none'));
+    assert.ok(animations.portals.every(portal => portal.filter.startsWith('blur(')));
+    assert.ok(animations.portals.every(portal => portal.opacity > 0), 'reduced motion must keep a static soft cue on all four games');
     assert.equal(animations.challenge, 'none');
     await assertNoHorizontalOverflow(page);
     assert.deepEqual(runtimeErrors, []);
